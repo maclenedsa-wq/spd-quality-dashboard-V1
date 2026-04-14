@@ -1,6 +1,3 @@
-st.write("THIS SHOULD SHOW")
-st.stop()
-
 from __future__ import annotations
 
 import streamlit as st
@@ -19,14 +16,6 @@ st.set_page_config(
 )
 
 st.title("🚀 App Loaded Successfully")
-
-st.set_page_config(
-    page_title="OMNI SPD Decision System",
-    page_icon=":chart_with_upwards_trend:",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
 
 DATA_FILE = Path("Correlation __ OMNI - SPD_CES __ Mar2026 (1).xlsx")
 SHEET_NAME = "Health"
