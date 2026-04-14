@@ -15,7 +15,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("🚀 App Loaded Successfully")
+st.title("OMNI Sales Performance Dashboard")
 
 DATA_FILE = Path(__file__).parent / "data.xlsx"
 SHEET_NAME = "Health"
