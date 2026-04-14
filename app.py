@@ -16,6 +16,7 @@ st.set_page_config(
 )
 
 st.title("🚀 App Loaded Successfully")
+st.write("v2 deployment fix")
 
 DATA_FILE = Path(__file__).parent / "data.xlsx"
 SHEET_NAME = "Health"
