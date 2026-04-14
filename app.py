@@ -17,7 +17,7 @@ st.set_page_config(
 
 st.title("🚀 App Loaded Successfully")
 
-DATA_FILE = Path("Correlation __ OMNI - SPD_CES __ Mar2026 (1).xlsx")
+DATA_FILE = Path(__file__).parent / "data.xlsx"
 SHEET_NAME = "Health"
 
 BG = "#F4F7FB"
