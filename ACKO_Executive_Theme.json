@@ -1,0 +1,76 @@
+{
+  "name": "ACKO Executive Health Dashboard",
+  "dataColors": [
+    "#0F9D58",
+    "#2563EB",
+    "#5F6B7A",
+    "#D93025",
+    "#13B5A6",
+    "#9CA3AF"
+  ],
+  "background": "#F7F9FC",
+  "foreground": "#111827",
+  "tableAccent": "#2563EB",
+  "good": "#0F9D58",
+  "neutral": "#5F6B7A",
+  "bad": "#D93025",
+  "visualStyles": {
+    "*": {
+      "*": {
+        "title": [
+          {
+            "fontFace": "Segoe UI Semibold",
+            "fontSize": 12,
+            "color": { "solid": { "color": "#111827" } }
+          }
+        ],
+        "labels": [
+          {
+            "color": { "solid": { "color": "#374151" } },
+            "fontSize": 10
+          }
+        ],
+        "background": [
+          {
+            "show": true,
+            "color": { "solid": { "color": "#FFFFFF" } },
+            "transparency": 0
+          }
+        ],
+        "border": [
+          {
+            "show": true,
+            "color": { "solid": { "color": "#E5E7EB" } },
+            "radius": 8
+          }
+        ]
+      }
+    },
+    "card": {
+      "*": {
+        "categoryLabels": [
+          {
+            "color": { "solid": { "color": "#5F6B7A" } },
+            "fontSize": 10
+          }
+        ],
+        "labels": [
+          {
+            "color": { "solid": { "color": "#111827" } },
+            "fontSize": 22
+          }
+        ]
+      }
+    },
+    "slicer": {
+      "*": {
+        "items": [
+          {
+            "fontSize": 10,
+            "color": { "solid": { "color": "#111827" } }
+          }
+        ]
+      }
+    }
+  }
+}
