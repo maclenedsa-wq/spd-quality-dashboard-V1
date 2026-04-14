@@ -703,9 +703,9 @@ def executive_brief_page(
             "SPD is not primarily a tone problem. It is moving with discovery, transaction progression, and empathy-linked conversion behavior."
         )
     with b:
-        st.markdown("**What changed from the prototype?**")
+        st.markdown("**Why it matters**")
         st.write(
-            "The ranking now blends correlation, High-vs-Low gaps, and weak absolute scores, so leaders see where intervention will matter most."
+            "The biggest SPD gains will come from improving discovery, transaction progression, and empathy rather than generic communication polish."
         )
     with c:
         st.markdown("**What next?**")
