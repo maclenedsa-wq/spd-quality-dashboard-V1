@@ -32,18 +32,63 @@ TEAL = "#0F766E"
 SLATE = "#CBD5E1"
 NAVY = "#0F172A"
 
-PARAMETERS = {
+QUALITY_PARAMETERS = {
     "Listening & Understanding Needs": "Listening",
     "Product Knowledge and Explanation": "Product Knowledge",
     "Transaction": "Transaction",
     "Acknowledge & Empathise": "Empathise",
     "Language, Tone and Professionalism": "Language Tone Professionalism",
 }
-KEY_DRIVER_ORDER = [
+
+DETAILED_PARAMETERS = {
+    "Positive": "Positive",
+    "Negative": "Negative",
+    "Neutral": "Neutral",
+    "Escalated": ".escalated",
+    "Not Interested in Buying": ".not_interested_in_buying",
+    "Payment Done": ".payment_done",
+    "Will Buy Self": ".will_buy_self",
+    "Positive Intent Needs Follow Up": ".positive_intent_needs_follow_up",
+    "Non Material Interaction": ".non_material_interaction",
+    "Follow Up Required": ".follow_up_required",
+    "Unresolved": ".unresolved",
+    "Partially Resolved": ".partially_resolved",
+    "Resolved": ".resolved",
+    "Threatened to Escalate": ".threatened_to_escalate",
+}
+
+PARAMETER_GROUPS = {
+    "Quality Score": QUALITY_PARAMETERS,
+    "Detailed Parameters": DETAILED_PARAMETERS,
+    "All Parameters": {**QUALITY_PARAMETERS, **DETAILED_PARAMETERS},
+}
+
+DEFAULT_DRIVER_FOCUS = [
     "Listening & Understanding Needs",
     "Transaction",
     "Acknowledge & Empathise",
 ]
+THEME_BY_PARAMETER = {
+    "Listening & Understanding Needs": "Need Discovery",
+    "Product Knowledge and Explanation": "Product Confidence",
+    "Transaction": "Conversion Flow",
+    "Acknowledge & Empathise": "Emotional Handling",
+    "Language, Tone and Professionalism": "Communication Hygiene",
+    "Positive": "Intent Signals",
+    "Negative": "Disposition Outcome",
+    "Neutral": "Disposition Outcome",
+    "Escalated": "Escalation Risk",
+    "Not Interested in Buying": "Non-Buying Outcome",
+    "Payment Done": "Closure Signals",
+    "Will Buy Self": "Deferred Purchase Signals",
+    "Positive Intent Needs Follow Up": "Follow Up Pipeline",
+    "Non Material Interaction": "Low-Value Contact",
+    "Follow Up Required": "Follow Up Pipeline",
+    "Unresolved": "Resolution Risk",
+    "Partially Resolved": "Resolution Progress",
+    "Resolved": "Resolution Progress",
+    "Threatened to Escalate": "Escalation Risk",
+}
 
 
 def inject_css() -> None:
@@ -205,7 +250,12 @@ def load_data() -> pd.DataFrame:
     )
 
     text_columns = ["Campaign", "Team / Vendor", "ECN", "Agent Name"]
-    numeric_columns = ["SPD", "Overall Quality Score", *PARAMETERS.values()]
+    numeric_columns = [
+        "SPD",
+        "Overall Quality Score",
+        *QUALITY_PARAMETERS.values(),
+        *DETAILED_PARAMETERS.values(),
+    ]
 
     for column in text_columns:
         if column in df.columns:
@@ -313,7 +363,54 @@ def section_close() -> None:
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-def filter_data(df: pd.DataFrame) -> tuple[pd.DataFrame, str]:
+def get_parameter_catalog(view_name: str) -> dict[str, str]:
+    return PARAMETER_GROUPS[view_name]
+
+
+def get_driver_focus(parameter_metrics: pd.DataFrame) -> list[str]:
+    if parameter_metrics.empty:
+        return []
+
+    focus = parameter_metrics.sort_values("Driver Score", ascending=False).head(3)["Parameter"].tolist()
+    if len(focus) >= 3:
+        return focus
+    fallbacks = [label for label in DEFAULT_DRIVER_FOCUS if label in parameter_metrics["Parameter"].tolist()]
+    for label in fallbacks:
+        if label not in focus:
+            focus.append(label)
+        if len(focus) == 3:
+            break
+    return focus
+
+
+def summarize_driver_themes(parameter_metrics: pd.DataFrame) -> str:
+    if parameter_metrics.empty:
+        return "No parameter theme is available for the current filters."
+
+    top = parameter_metrics.sort_values("Driver Score", ascending=False).head(3)["Parameter"].tolist()
+    theme_counts: dict[str, int] = {}
+    for label in top:
+        theme = THEME_BY_PARAMETER.get(label, "Other Behaviors")
+        theme_counts[theme] = theme_counts.get(theme, 0) + 1
+
+    dominant_themes = sorted(theme_counts.items(), key=lambda item: (-item[1], item[0]))
+    theme_labels = [theme for theme, _ in dominant_themes[:2]]
+    weakest = parameter_metrics.sort_values("Average Score").iloc[0]["Parameter"]
+    weakest_theme = THEME_BY_PARAMETER.get(weakest, "execution quality")
+
+    if len(theme_labels) == 1:
+        return (
+            f"The current SPD story is being led by {theme_labels[0].lower()}, while the lowest-scoring behavior "
+            f"sits in {weakest_theme.lower()}."
+        )
+
+    return (
+        f"The current SPD story is clustering around {theme_labels[0].lower()} and {theme_labels[1].lower()}, "
+        f"while the lowest-scoring behavior sits in {weakest_theme.lower()}."
+    )
+
+
+def filter_data(df: pd.DataFrame) -> tuple[pd.DataFrame, str, str]:
     st.sidebar.title("OMNI Decision System")
     st.sidebar.caption("Executive version")
     st.sidebar.markdown("## Filters")
@@ -335,6 +432,11 @@ def filter_data(df: pd.DataFrame) -> tuple[pd.DataFrame, str]:
         ["Outlier-adjusted view", "Raw view"],
         help="Outlier-adjusted excludes SPD values above 3 to keep the driver model more stable.",
     )
+    parameter_view = st.sidebar.radio(
+        "Parameter scope",
+        ["Quality Score", "Detailed Parameters", "All Parameters"],
+        help="Switch between the original quality pillars, the additional detailed parameters, or a combined SPD driver view.",
+    )
 
     filtered = df.copy()
     if selected_team:
@@ -352,12 +454,12 @@ def filter_data(df: pd.DataFrame) -> tuple[pd.DataFrame, str]:
     st.sidebar.caption(
         f"{filtered['Agent Name'].nunique()} agents | {filtered['Team / Vendor'].nunique()} teams | {filtered['SPD'].notna().sum()} SPD rows"
     )
-    return filtered, outlier_mode
+    return filtered, outlier_mode, parameter_view
 
 
-def get_parameter_metrics(df: pd.DataFrame) -> pd.DataFrame:
+def get_parameter_metrics(df: pd.DataFrame, parameter_catalog: dict[str, str]) -> pd.DataFrame:
     rows = []
-    for label, column in PARAMETERS.items():
+    for label, column in parameter_catalog.items():
         high = df.loc[df["SPD Band"] == "High", column].mean()
         low = df.loc[df["SPD Band"] == "Low", column].mean()
         gap = high - low
@@ -382,6 +484,7 @@ def get_parameter_metrics(df: pd.DataFrame) -> pd.DataFrame:
     metrics = pd.DataFrame(rows)
     metrics["Corr Score"] = normalize(metrics["Correlation"].fillna(metrics["Correlation"].min()))
     metrics["Gap Score"] = normalize(metrics["Gap"].fillna(metrics["Gap"].min()))
+    metrics["Gap Magnitude"] = metrics["Gap"].abs()
     metrics["Low Score Penalty"] = normalize((100 - metrics["Average Score"]).fillna(0))
     metrics["Driver Score"] = (
         metrics["Corr Score"] * 0.5
@@ -399,7 +502,9 @@ def get_parameter_metrics(df: pd.DataFrame) -> pd.DataFrame:
     return metrics.sort_values(["Driver Score", "Correlation"], ascending=False).reset_index(drop=True)
 
 
-def get_team_metrics(df: pd.DataFrame, parameter_metrics: pd.DataFrame) -> pd.DataFrame:
+def get_team_metrics(
+    df: pd.DataFrame, parameter_metrics: pd.DataFrame, parameter_catalog: dict[str, str]
+) -> pd.DataFrame:
     rows = []
     driver_cols = parameter_metrics.sort_values("Driver Score", ascending=False).head(3)["Column"].tolist()
     high_spd = df["SPD"].quantile(0.7) if df["SPD"].notna().any() else np.nan
@@ -407,13 +512,13 @@ def get_team_metrics(df: pd.DataFrame, parameter_metrics: pd.DataFrame) -> pd.Da
     for team, group in df.groupby("Team / Vendor", dropna=False):
         if len(group) == 0:
             continue
-        parameter_means = group[list(PARAMETERS.values())].mean().astype(float)
+        parameter_means = group[list(parameter_catalog.values())].mean().astype(float)
         if parameter_means.isna().all():
             weakest_label = "No valid parameter score"
         else:
             weakest_idx = parameter_means.idxmin()
-            weakest_label = next(label for label, col in PARAMETERS.items() if col == weakest_idx)
-        consistency_values = [group[col].std() for col in PARAMETERS.values()]
+            weakest_label = next(label for label, col in parameter_catalog.items() if col == weakest_idx)
+        consistency_values = [group[col].std() for col in parameter_catalog.values()]
         consistency = (
             float(np.nanmean(consistency_values))
             if any(pd.notna(v) for v in consistency_values)
@@ -428,7 +533,7 @@ def get_team_metrics(df: pd.DataFrame, parameter_metrics: pd.DataFrame) -> pd.Da
         risk_parts = []
         if group["SPD"].mean() <= df["SPD"].quantile(0.3):
             risk_parts.append("Low SPD")
-        if consistency >= np.nanmean([df[col].std() for col in PARAMETERS.values()]):
+        if consistency >= np.nanmean([df[col].std() for col in parameter_catalog.values()]):
             risk_parts.append("Inconsistent execution")
         if pd.notna(low_driver) and low_driver < df[driver_cols].mean().mean():
             risk_parts.append("Weak driver behaviors")
@@ -532,35 +637,40 @@ def decision_snapshot(
     parameter_metrics: pd.DataFrame,
     team_metrics: pd.DataFrame,
     outlier_mode: str,
+    parameter_view: str,
 ) -> dict[str, str]:
     top_driver = parameter_metrics.iloc[0]
     lowest_parameter = parameter_metrics.sort_values("Average Score").iloc[0]
     weakest_driver = parameter_metrics.sort_values("Correlation").iloc[0]
     highest_gap = parameter_metrics.sort_values("Gap", ascending=False).iloc[0]
     primary_team = team_metrics.iloc[0]["Team / Vendor"] if not team_metrics.empty else "No team"
+    focus_parameters = get_driver_focus(parameter_metrics)
+    focus_line = ", ".join(focus_parameters[:2]) if len(focus_parameters) >= 2 else focus_parameters[0]
 
     what = (
-        f"SPD averages {df['SPD'].mean():.2f} in the current selection, while the strongest behavioral driver is "
+        f"SPD averages {df['SPD'].mean():.2f} in the current selection, while the strongest driver in the {parameter_view.lower()} view is "
         f"{top_driver['Parameter']}."
     )
     why = (
         f"High performers outperform low performers most on {highest_gap['Parameter']} "
-        f"({highest_gap['Gap %']:.1f}% gap), while {lowest_parameter['Parameter']} is the lowest absolute quality score."
+        f"({highest_gap['Gap %']:.1f}% gap), while {lowest_parameter['Parameter']} is the lowest absolute score in scope."
     )
     next_step = (
         f"Prioritize {lowest_parameter['Parameter']} for training, review execution stability in {primary_team}, "
-        f"and coach managers on {', '.join(KEY_DRIVER_ORDER[:2])}."
+        f"and coach managers on {focus_line} first."
     )
     caveat = (
         "Outlier-adjusted view is active, so the dashboard is prioritizing the stable underlying pattern."
         if outlier_mode == "Outlier-adjusted view"
         else "Raw view is active, so one extreme SPD outlier may distort the driver ranking."
     )
+    theme_summary = summarize_driver_themes(parameter_metrics)
     return {
         "what": what,
         "why": why,
         "next": next_step,
         "caveat": caveat,
+        "theme_summary": theme_summary,
         "top_driver": top_driver["Parameter"],
         "weakest_driver": weakest_driver["Parameter"],
         "lowest_parameter": lowest_parameter["Parameter"],
@@ -582,6 +692,8 @@ def render_insight_panel(snapshot: dict[str, str], parameter_metrics: pd.DataFra
             <div class="insight-line">{snapshot["next"]}</div>
             <div class="tiny-label">Analytical note</div>
             <div class="insight-line">{snapshot["caveat"]}</div>
+            <div class="tiny-label">Theme readout</div>
+            <div class="insight-line">{snapshot["theme_summary"]}</div>
             <div style="margin-top:0.6rem;">
                 {''.join(f'<span class="pill pill-green">{item}</span>' for item in top_two)}
                 <span class="pill pill-red">{weak}</span>
@@ -597,11 +709,12 @@ def executive_brief_page(
     parameter_metrics: pd.DataFrame,
     team_metrics: pd.DataFrame,
     outlier_mode: str,
+    parameter_view: str,
 ) -> None:
-    snapshot = decision_snapshot(df, parameter_metrics, team_metrics, outlier_mode)
+    snapshot = decision_snapshot(df, parameter_metrics, team_metrics, outlier_mode, parameter_view)
     hero(
         "Executive Brief",
-        f"{selection_label(df)} | {outlier_mode} | Decision focus: what is happening, why, and what leadership should do next",
+        f"{selection_label(df)} | {outlier_mode} | {parameter_view} | Decision focus: what is happening, why, and what leadership should do next",
     )
 
     strongest = parameter_metrics.iloc[0]
@@ -621,7 +734,7 @@ def executive_brief_page(
         metric_card(
             "Weakest Driver",
             weakest["Parameter"],
-            f"Lowest average score {weakest['Average Score']:.2f}",
+            f"Lowest average score {weakest['Average Score']:.2f} in {parameter_view.lower()}",
         )
 
     left, right = st.columns([1.75, 1.0], gap="large")
@@ -700,12 +813,12 @@ def executive_brief_page(
     with a:
         st.markdown("**So what?**")
         st.write(
-            "SPD is not primarily a tone problem. It is moving with discovery, transaction progression, and empathy-linked conversion behavior."
+            summarize_driver_themes(parameter_metrics)
         )
     with b:
         st.markdown("**Why it matters**")
         st.write(
-            "The biggest SPD gains will come from improving discovery, transaction progression, and empathy rather than generic communication polish."
+            f"The biggest SPD gains in the {parameter_view.lower()} view will come from the highest-ranked driver cluster rather than spreading effort evenly."
         )
     with c:
         st.markdown("**What next?**")
@@ -715,10 +828,16 @@ def executive_brief_page(
     section_close()
 
 
-def root_cause_page(df: pd.DataFrame, parameter_metrics: pd.DataFrame, team_metrics: pd.DataFrame) -> None:
+def root_cause_page(
+    df: pd.DataFrame,
+    parameter_metrics: pd.DataFrame,
+    team_metrics: pd.DataFrame,
+    parameter_catalog: dict[str, str],
+    parameter_view: str,
+) -> None:
     hero(
         "Root Cause",
-        f"{selection_label(df)} | Locate where SPD is breaking: team, agent, parameter, or execution consistency",
+        f"{selection_label(df)} | {parameter_view} | Locate where SPD is breaking: team, agent, parameter, or execution consistency",
     )
 
     section_open()
@@ -754,9 +873,9 @@ def root_cause_page(df: pd.DataFrame, parameter_metrics: pd.DataFrame, team_metr
     with c1:
         section_open()
         heat = (
-            df.groupby("Team / Vendor")[list(PARAMETERS.values())]
+            df.groupby("Team / Vendor")[list(parameter_catalog.values())]
             .mean()
-            .rename(columns={v: k for k, v in PARAMETERS.items()})
+            .rename(columns={v: k for k, v in parameter_catalog.items()})
         )
         heat = heat.reindex(team_metrics["Team / Vendor"].tolist()) if not team_metrics.empty else heat
         heat_fig = go.Figure(
@@ -781,7 +900,7 @@ def root_cause_page(df: pd.DataFrame, parameter_metrics: pd.DataFrame, team_metr
         section_open()
         split_by = st.selectbox(
             "Decomposition-style view",
-            ["Team / Vendor", "Agent Name", "Overall Quality Score", *PARAMETERS.values()],
+            ["Team / Vendor", "Agent Name", "Overall Quality Score", *parameter_catalog.values()],
             key="decomp",
         )
         grp = df.groupby(split_by, dropna=False)["SPD"].mean().reset_index().dropna()
@@ -862,10 +981,11 @@ def action_center_page(
     parameter_metrics: pd.DataFrame,
     team_metrics: pd.DataFrame,
     agent_risks: pd.DataFrame,
+    parameter_view: str,
 ) -> None:
     hero(
         "Action Center",
-        f"{selection_label(df)} | Function-specific action plans for Training, Operations, and Managers",
+        f"{selection_label(df)} | {parameter_view} | Function-specific action plans for Training, Operations, and Managers",
     )
 
     lowest_score = parameter_metrics.sort_values("Average Score").iloc[0]
@@ -914,7 +1034,9 @@ def action_center_page(
 
     with mgr_col:
         manager_focus = agent_risks[agent_risks["Priority Bucket"].isin(["Fix Now", "Coach Now"])].head(5)
-        coach_line = ", ".join(KEY_DRIVER_ORDER[:2])
+        driver_focus = get_driver_focus(parameter_metrics)
+        coach_line = ", ".join(driver_focus[:2])
+        third_focus = driver_focus[2] if len(driver_focus) > 2 else driver_focus[-1]
         extra = (
             f"{len(manager_focus)} agents need immediate intervention."
             if not manager_focus.empty
@@ -926,8 +1048,7 @@ def action_center_page(
                 <div class="action-title">Manager Coaching View</div>
                 <div class="tiny-label">Coaching priority</div>
                 <div class="action-body">
-                    Managers should coach low-SPD agents on <b>{coach_line}</b> and <b>{KEY_DRIVER_ORDER[2]}</b> to improve discovery,
-                    empathy handling, and progression to sale. {extra}
+                    Managers should coach low-SPD agents on <b>{coach_line}</b> and <b>{third_focus}</b> to improve the strongest SPD-linked behaviors in the current view. {extra}
                 </div>
             </div>
             """,
@@ -938,7 +1059,10 @@ def action_center_page(
     with c1:
         section_open()
         radar_rows = []
-        for label, column in PARAMETERS.items():
+        radar_catalog = parameter_metrics.sort_values("Driver Score", ascending=False).head(6)
+        for _, metric_row in radar_catalog.iterrows():
+            label = metric_row["Parameter"]
+            column = metric_row["Column"]
             for band in ["High", "Low"]:
                 subset = df[df["SPD Band"] == band]
                 radar_rows.append({"Parameter": label, "SPD Band": band, "Score": subset[column].mean()})
@@ -968,7 +1092,7 @@ def action_center_page(
             driver_opportunity,
             x="Average Score",
             y="Driver Score",
-            size="Gap",
+            size="Gap Magnitude",
             color="Action Priority",
             text="Parameter",
             color_discrete_map={"Fix Now": RED, "Coach Next": AMBER, "Sustain": GREEN},
@@ -1020,10 +1144,12 @@ def action_center_page(
     section_close()
 
 
-def diagnostics_page(df: pd.DataFrame, parameter_metrics: pd.DataFrame) -> None:
+def diagnostics_page(
+    df: pd.DataFrame, parameter_metrics: pd.DataFrame, parameter_view: str
+) -> None:
     hero(
         "Diagnostics",
-        f"{selection_label(df)} | Detailed evidence for validation and coaching drill-down",
+        f"{selection_label(df)} | {parameter_view} | Detailed evidence for validation and coaching drill-down",
     )
 
     c1, c2 = st.columns([1.0, 1.65], gap="large")
@@ -1048,15 +1174,34 @@ def diagnostics_page(df: pd.DataFrame, parameter_metrics: pd.DataFrame) -> None:
 
     with c2:
         section_open()
+        diagnostic_options = parameter_metrics["Parameter"].tolist()
+        default_parameters = diagnostic_options[: min(6, len(diagnostic_options))]
+        selected_parameters = st.multiselect(
+            "Diagnostic parameters",
+            diagnostic_options,
+            default=default_parameters,
+            key="diagnostic_parameters",
+        )
+        selected_metrics = parameter_metrics[parameter_metrics["Parameter"].isin(selected_parameters)].copy()
+        if selected_metrics.empty:
+            st.info("Select at least one parameter to view SPD scatter diagnostics.")
+            section_close()
+            return
+
+        chart_count = len(selected_metrics)
+        cols = min(3, chart_count)
+        rows = int(np.ceil(chart_count / cols))
         fig = make_subplots(
-            rows=2,
-            cols=3,
-            subplot_titles=list(PARAMETERS.keys()) + [""],
+            rows=rows,
+            cols=cols,
+            subplot_titles=selected_metrics["Parameter"].tolist(),
             horizontal_spacing=0.08,
             vertical_spacing=0.16,
         )
-        positions = [(1, 1), (1, 2), (1, 3), (2, 1), (2, 2)]
-        for (label, column), (row, col) in zip(PARAMETERS.items(), positions):
+        positions = [(idx // cols + 1, idx % cols + 1) for idx in range(chart_count)]
+        for (_, metric_row), (row, col) in zip(selected_metrics.iterrows(), positions):
+            label = metric_row["Parameter"]
+            column = metric_row["Column"]
             pair = df.dropna(subset=[column, "SPD"])
             fig.add_trace(
                 go.Scatter(
@@ -1081,7 +1226,7 @@ def diagnostics_page(df: pd.DataFrame, parameter_metrics: pd.DataFrame) -> None:
             title="Parameter-by-parameter SPD relationship",
             paper_bgcolor=SURFACE,
             plot_bgcolor=SURFACE,
-            height=650,
+            height=max(420, rows * 310),
             margin=dict(l=10, r=10, t=55, b=10),
         )
         st.plotly_chart(fig, use_container_width=True)
@@ -1091,16 +1236,15 @@ def diagnostics_page(df: pd.DataFrame, parameter_metrics: pd.DataFrame) -> None:
 def main() -> None:
     inject_css()
     df = load_data()
-    filtered, outlier_mode = filter_data(df)
-
-    st.write("Checkpoint 2")
+    filtered, outlier_mode, parameter_view = filter_data(df)
 
     if filtered.empty:
         st.warning("No data available for the current filters. Adjust the slicers to continue.")
         return
 
-    parameter_metrics = get_parameter_metrics(filtered)
-    team_metrics = get_team_metrics(filtered, parameter_metrics)
+    parameter_catalog = get_parameter_catalog(parameter_view)
+    parameter_metrics = get_parameter_metrics(filtered, parameter_catalog)
+    team_metrics = get_team_metrics(filtered, parameter_metrics, parameter_catalog)
     agent_risks = get_agent_risks(filtered, parameter_metrics)
 
     page = st.sidebar.radio(
@@ -1109,13 +1253,13 @@ def main() -> None:
     )
 
     if page == "Executive Brief":
-        executive_brief_page(filtered, parameter_metrics, team_metrics, outlier_mode)
+        executive_brief_page(filtered, parameter_metrics, team_metrics, outlier_mode, parameter_view)
     elif page == "Root Cause":
-        root_cause_page(filtered, parameter_metrics, team_metrics)
+        root_cause_page(filtered, parameter_metrics, team_metrics, parameter_catalog, parameter_view)
     elif page == "Action Center":
-        action_center_page(filtered, parameter_metrics, team_metrics, agent_risks)
+        action_center_page(filtered, parameter_metrics, team_metrics, agent_risks, parameter_view)
     else:
-        diagnostics_page(filtered, parameter_metrics)
+        diagnostics_page(filtered, parameter_metrics, parameter_view)
 
 
 if __name__ == "__main__":
