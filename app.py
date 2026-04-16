@@ -99,6 +99,7 @@ DISPLAY_LABELS = {
 }
 ROLE_VIEWS = ["Leadership", "Managers", "Training", "Operations"]
 COMPARE_MODES = ["None", "Team / Vendor", "Campaign", "SPD Band"]
+SIMULATION_STEPS = [-2.0, -1.0, 0.0, 1.0, 2.0]
 
 
 def inject_css() -> None:
@@ -593,6 +594,18 @@ def filter_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
             else:
                 st.caption("Not enough groups available for comparison under current data.")
 
+    with st.sidebar.expander("Phase 2 Lab", expanded=False):
+        st.caption("Trend-ready intelligence with current snapshot data. True historical trends need a date field or snapshots over time.")
+        sim_controls = {}
+        sim_parameters = get_parameter_catalog(parameter_view)
+        sim_metric_names = list(sim_parameters.keys())[:3]
+        for name in sim_metric_names:
+            sim_controls[f"sim_{sim_parameters[name]}"] = st.select_slider(
+                f"{display_label(name)} uplift",
+                options=SIMULATION_STEPS,
+                value=0.0,
+            )
+
     filtered = df.copy()
     if selected_campaign:
         filtered = filtered[filtered["Campaign"].isin(selected_campaign)]
@@ -630,6 +643,7 @@ def filter_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
         "compare_mode": compare_mode,
         "compare_left": compare_left,
         "compare_right": compare_right,
+        **sim_controls,
     }
     return filtered, settings
 
@@ -861,6 +875,136 @@ def get_role_summary(role_view: str, snapshot: dict[str, str], phase1_kpis: dict
         "Leadership should manage the business through risk, opportunity, and momentum.",
         f"Positive intent is at {format_metric_value(phase1_kpis['Positive Intent Rate'])}, while payment completion sits at {format_metric_value(phase1_kpis['Payment Completion Rate'])}.",
     )
+
+
+def fit_expected_spd_model(df: pd.DataFrame, parameter_metrics: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, float]]:
+    driver_metrics = parameter_metrics.head(min(4, len(parameter_metrics)))
+    driver_cols = driver_metrics["Column"].tolist()
+    if not driver_cols:
+        result = df.copy()
+        result["Expected SPD"] = np.nan
+        result["SPD Gap vs Expected"] = np.nan
+        return result, {"r2": np.nan, "drivers": 0}
+
+    model_df = df.dropna(subset=["SPD", *driver_cols]).copy()
+    result = df.copy()
+    if len(model_df) < max(5, len(driver_cols) + 1):
+        result["Expected SPD"] = np.nan
+        result["SPD Gap vs Expected"] = np.nan
+        return result, {"r2": np.nan, "drivers": len(driver_cols)}
+
+    X = model_df[driver_cols].astype(float).to_numpy()
+    y = model_df["SPD"].astype(float).to_numpy()
+    X_aug = np.column_stack([np.ones(len(X)), X])
+    coef, _, _, _ = np.linalg.lstsq(X_aug, y, rcond=None)
+    predicted = X_aug @ coef
+    ss_res = float(np.sum((y - predicted) ** 2))
+    ss_tot = float(np.sum((y - y.mean()) ** 2))
+    r2 = 1 - ss_res / ss_tot if ss_tot else np.nan
+
+    all_valid = result[driver_cols].notna().all(axis=1)
+    result["Expected SPD"] = np.nan
+    if all_valid.any():
+        all_X = result.loc[all_valid, driver_cols].astype(float).to_numpy()
+        result.loc[all_valid, "Expected SPD"] = np.column_stack([np.ones(len(all_X)), all_X]) @ coef
+    result["SPD Gap vs Expected"] = result["SPD"] - result["Expected SPD"]
+    return result, {"r2": r2, "drivers": len(driver_cols), "driver_cols": driver_cols}
+
+
+def get_phase2_benchmarks(df: pd.DataFrame, modeled_df: pd.DataFrame) -> dict[str, float]:
+    outlier_share = float(df["Is Outlier SPD"].mean() * 100) if "Is Outlier SPD" in df.columns and len(df) else np.nan
+    return {
+        "Median SPD": float(df["SPD"].median()) if df["SPD"].notna().any() else np.nan,
+        "Top Quartile SPD": float(df["SPD"].quantile(0.75)) if df["SPD"].notna().any() else np.nan,
+        "Median Quality": float(df["Overall Quality Score"].median()) if df["Overall Quality Score"].notna().any() else np.nan,
+        "Top Quartile Quality": float(df["Overall Quality Score"].quantile(0.75)) if df["Overall Quality Score"].notna().any() else np.nan,
+        "Sample Size": float(len(df)),
+        "Outlier Share %": outlier_share,
+        "Expected SPD Coverage %": float(modeled_df["Expected SPD"].notna().mean() * 100) if len(modeled_df) else np.nan,
+    }
+
+
+def get_confidence_summary(df: pd.DataFrame, model_meta: dict[str, float]) -> dict[str, str]:
+    sample_size = len(df)
+    if sample_size >= 50:
+        sample_label = "High"
+    elif sample_size >= 25:
+        sample_label = "Medium"
+    else:
+        sample_label = "Low"
+
+    r2 = model_meta.get("r2", np.nan)
+    if pd.isna(r2):
+        model_label = "Insufficient"
+    elif r2 >= 0.35:
+        model_label = "Strong"
+    elif r2 >= 0.18:
+        model_label = "Moderate"
+    else:
+        model_label = "Weak"
+
+    outlier_share = float(df["Is Outlier SPD"].mean() * 100) if "Is Outlier SPD" in df.columns and len(df) else np.nan
+    if pd.isna(outlier_share):
+        outlier_label = "Unknown"
+    elif outlier_share <= 5:
+        outlier_label = "Stable"
+    elif outlier_share <= 12:
+        outlier_label = "Watch"
+    else:
+        outlier_label = "Sensitive"
+
+    return {
+        "Sample confidence": sample_label,
+        "Model strength": model_label,
+        "Outlier sensitivity": outlier_label,
+        "Trend status": "Trend-ready only: no historical date field in current source",
+    }
+
+
+def get_phase2_segments(modeled_df: pd.DataFrame) -> pd.DataFrame:
+    if modeled_df.empty or "Expected SPD" not in modeled_df.columns:
+        return pd.DataFrame()
+
+    segmented = modeled_df.dropna(subset=["SPD", "Expected SPD"]).copy()
+    if segmented.empty:
+        return segmented
+
+    segmented["Performance Segment"] = np.select(
+        [
+            segmented["SPD Gap vs Expected"] >= 0.2,
+            segmented["SPD Gap vs Expected"] <= -0.2,
+        ],
+        ["Outperforming Benchmark", "Below Benchmark"],
+        default="On Benchmark",
+    )
+    return segmented
+
+
+def simulate_spd_uplift(
+    df: pd.DataFrame, parameter_metrics: pd.DataFrame, settings: dict[str, object]
+) -> tuple[pd.DataFrame, float]:
+    top3 = parameter_metrics.head(min(3, len(parameter_metrics))).copy()
+    if top3.empty:
+        return pd.DataFrame(), np.nan
+
+    base_spd = float(df["SPD"].mean()) if df["SPD"].notna().any() else np.nan
+    rows = []
+    estimated_spd = base_spd
+    for idx, row in top3.iterrows():
+        key = f"sim_{row['Column']}"
+        change = float(settings.get(key, 0.0))
+        estimated_gain = change * float(row["Correlation"]) * 0.08 if pd.notna(row["Correlation"]) else 0.0
+        estimated_spd += estimated_gain if pd.notna(estimated_spd) else 0.0
+        rows.append(
+            {
+                "Parameter": row["Parameter"],
+                "Display Parameter": display_label(row["Parameter"]),
+                "Change": change,
+                "Correlation": row["Correlation"],
+                "Estimated SPD Impact": estimated_gain,
+            }
+        )
+    return pd.DataFrame(rows), estimated_spd
 
 
 def get_parameter_metrics(df: pd.DataFrame, parameter_catalog: dict[str, str]) -> pd.DataFrame:
@@ -1108,15 +1252,19 @@ def render_insight_panel(snapshot: dict[str, str], parameter_metrics: pd.DataFra
 
 def executive_brief_page(
     df: pd.DataFrame,
+    modeled_df: pd.DataFrame,
     parameter_metrics: pd.DataFrame,
     team_metrics: pd.DataFrame,
     agent_risks: pd.DataFrame,
+    model_meta: dict[str, float],
     outlier_mode: str,
     parameter_view: str,
     settings: dict[str, object],
 ) -> None:
     snapshot = decision_snapshot(df, parameter_metrics, team_metrics, outlier_mode, parameter_view)
     phase1_kpis = get_phase1_kpis(df, team_metrics, agent_risks)
+    phase2_benchmarks = get_phase2_benchmarks(df, modeled_df)
+    confidence = get_confidence_summary(df, model_meta)
     comparison = build_comparison_frame(
         df,
         settings["compare_mode"],
@@ -1311,6 +1459,60 @@ def executive_brief_page(
             else:
                 st.dataframe(table.head(8).style.format({"SPD": "{:.2f}", "Overall Quality Score": "{:.2f}"}), use_container_width=True, height=220)
     section_close()
+
+    c1, c2 = st.columns([1.0, 1.1], gap="large")
+    with c1:
+        section_open()
+        st.markdown("**Phase 2 Confidence and Benchmarks**")
+        benchmark_df = pd.DataFrame(
+            [
+                {"Measure": "Median SPD", "Value": f"{phase2_benchmarks['Median SPD']:.2f}" if pd.notna(phase2_benchmarks['Median SPD']) else "-"},
+                {"Measure": "Top Quartile SPD", "Value": f"{phase2_benchmarks['Top Quartile SPD']:.2f}" if pd.notna(phase2_benchmarks['Top Quartile SPD']) else "-"},
+                {"Measure": "Expected SPD Coverage", "Value": format_metric_value(phase2_benchmarks["Expected SPD Coverage %"])},
+                {"Measure": "Outlier Share", "Value": format_metric_value(phase2_benchmarks["Outlier Share %"])},
+                {"Measure": "Sample confidence", "Value": confidence["Sample confidence"]},
+                {"Measure": "Model strength", "Value": confidence["Model strength"]},
+            ]
+        )
+        st.dataframe(benchmark_df, use_container_width=True, height=245)
+        st.caption(confidence["Trend status"])
+        section_close()
+    with c2:
+        section_open()
+        st.markdown("**Expected vs Actual SPD**")
+        segment_df = get_phase2_segments(modeled_df)
+        if segment_df.empty:
+            st.info("Not enough complete rows to estimate expected SPD for this filter selection.")
+        else:
+            segment_summary = (
+                segment_df.groupby("Performance Segment", as_index=False)
+                .agg({"Agent Name": "count", "SPD Gap vs Expected": "mean"})
+                .rename(columns={"Agent Name": "Agents"})
+            )
+            seg_fig = px.bar(
+                segment_summary,
+                x="Performance Segment",
+                y="Agents",
+                color="SPD Gap vs Expected",
+                color_continuous_scale=[[0, RED], [0.5, BLUE], [1, GREEN]],
+                title="Performance vs expected benchmark",
+            )
+            seg_fig.update_layout(
+                paper_bgcolor=SURFACE,
+                plot_bgcolor=SURFACE,
+                coloraxis_showscale=False,
+                margin=dict(l=10, r=10, t=45, b=10),
+            )
+            st.plotly_chart(seg_fig, use_container_width=True)
+            st.dataframe(
+                segment_df[["Agent Name", "Team / Vendor", "SPD", "Expected SPD", "SPD Gap vs Expected", "Performance Segment"]]
+                .sort_values("SPD Gap vs Expected")
+                .head(10)
+                .style.format({"SPD": "{:.2f}", "Expected SPD": "{:.2f}", "SPD Gap vs Expected": "{:.2f}"}),
+                use_container_width=True,
+                height=210,
+            )
+        section_close()
 
 
 def root_cause_page(
@@ -1751,6 +1953,102 @@ def diagnostics_page(
         section_close()
 
 
+def performance_lab_page(
+    df: pd.DataFrame,
+    modeled_df: pd.DataFrame,
+    parameter_metrics: pd.DataFrame,
+    model_meta: dict[str, float],
+    settings: dict[str, object],
+) -> None:
+    hero(
+        "Performance Lab",
+        "Benchmark intelligence, expected SPD modeling, and what-if simulation using current snapshot data",
+    )
+    render_filter_summary(df, settings, parameter_metrics)
+
+    phase2_benchmarks = get_phase2_benchmarks(df, modeled_df)
+    confidence = get_confidence_summary(df, model_meta)
+    sim_df, estimated_spd = simulate_spd_uplift(df, parameter_metrics, settings)
+    segment_df = get_phase2_segments(modeled_df)
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        metric_card("Median SPD", f"{phase2_benchmarks['Median SPD']:.2f}" if pd.notna(phase2_benchmarks["Median SPD"]) else "-", "Current benchmark midpoint")
+    with c2:
+        metric_card("Top Quartile SPD", f"{phase2_benchmarks['Top Quartile SPD']:.2f}" if pd.notna(phase2_benchmarks["Top Quartile SPD"]) else "-", "Current aspirational benchmark")
+    with c3:
+        metric_card("Model Strength", confidence["Model strength"], f"Expected SPD coverage {format_metric_value(phase2_benchmarks['Expected SPD Coverage %'])}")
+    with c4:
+        metric_card("Simulated SPD", f"{estimated_spd:.2f}" if pd.notna(estimated_spd) else "-", "What-if uplift from Phase 2 lab controls")
+
+    c1, c2 = st.columns([1.0, 1.1], gap="large")
+    with c1:
+        section_open()
+        st.markdown("**Simulation Controls Readout**")
+        if sim_df.empty:
+            st.info("No simulation drivers available in the current parameter scope.")
+        else:
+            sim_df["Display Parameter"] = sim_df["Display Parameter"].fillna(sim_df["Parameter"])
+            st.dataframe(
+                sim_df[["Display Parameter", "Change", "Correlation", "Estimated SPD Impact"]]
+                .rename(columns={"Display Parameter": "Parameter"})
+                .style.format({"Change": "{:.1f}", "Correlation": "{:.3f}", "Estimated SPD Impact": "{:.2f}"}),
+                use_container_width=True,
+                height=220,
+            )
+            st.caption("Estimated SPD impact is a lightweight simulation using current correlations. It is directional, not a forecast.")
+        section_close()
+    with c2:
+        section_open()
+        st.markdown("**Confidence Readout**")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"Dimension": key, "Status": value}
+                    for key, value in confidence.items()
+                ]
+            ),
+            use_container_width=True,
+            height=220,
+        )
+        section_close()
+
+    section_open()
+    st.markdown("**Performance Segmentation**")
+    if segment_df.empty:
+        st.info("Expected-vs-actual segmentation is not available for the current filter selection.")
+    else:
+        seg_fig = px.scatter(
+            segment_df,
+            x="Expected SPD",
+            y="SPD",
+            color="Performance Segment",
+            hover_data=["Agent Name", "Team / Vendor", "SPD Gap vs Expected"],
+            color_discrete_map={
+                "Outperforming Benchmark": GREEN,
+                "On Benchmark": BLUE,
+                "Below Benchmark": RED,
+            },
+            title="Actual SPD vs expected SPD benchmark",
+        )
+        add_trendline(seg_fig, segment_df, "Expected SPD", "SPD")
+        seg_fig.update_layout(
+            paper_bgcolor=SURFACE,
+            plot_bgcolor=SURFACE,
+            margin=dict(l=10, r=10, t=45, b=10),
+            height=460,
+        )
+        st.plotly_chart(seg_fig, use_container_width=True)
+        st.dataframe(
+            segment_df[["Agent Name", "Team / Vendor", "SPD", "Expected SPD", "SPD Gap vs Expected", "Performance Segment"]]
+            .sort_values("SPD Gap vs Expected")
+            .style.format({"SPD": "{:.2f}", "Expected SPD": "{:.2f}", "SPD Gap vs Expected": "{:.2f}"}),
+            use_container_width=True,
+            height=280,
+        )
+    section_close()
+
+
 def main() -> None:
     inject_css()
     df = load_data()
@@ -1772,18 +2070,21 @@ def main() -> None:
     selected_catalog = build_catalog_from_metrics(parameter_metrics)
     team_metrics = get_team_metrics(filtered, parameter_metrics, selected_catalog)
     agent_risks = get_agent_risks(filtered, parameter_metrics)
+    modeled_df, model_meta = fit_expected_spd_model(filtered, parameter_metrics)
 
     page = st.sidebar.radio(
         "Navigation",
-        ["Executive Brief", "Root Cause", "Action Center", "Diagnostics"],
+        ["Executive Brief", "Root Cause", "Action Center", "Diagnostics", "Performance Lab"],
     )
 
     if page == "Executive Brief":
-        executive_brief_page(filtered, parameter_metrics, team_metrics, agent_risks, outlier_mode, parameter_view, settings)
+        executive_brief_page(filtered, modeled_df, parameter_metrics, team_metrics, agent_risks, model_meta, outlier_mode, parameter_view, settings)
     elif page == "Root Cause":
         root_cause_page(filtered, parameter_metrics, team_metrics, selected_catalog, parameter_view, settings)
     elif page == "Action Center":
         action_center_page(filtered, parameter_metrics, team_metrics, agent_risks, parameter_view, settings)
+    elif page == "Performance Lab":
+        performance_lab_page(filtered, modeled_df, parameter_metrics, model_meta, settings)
     else:
         diagnostics_page(filtered, parameter_metrics, parameter_view, settings)
 
