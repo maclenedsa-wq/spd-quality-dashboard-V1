@@ -411,11 +411,11 @@ def hero(title: str, subtitle: str) -> None:
         f"""
         <div class="page-header">
             <div>
-                <div class="page-title">OMNI SPD Insights Hub</div>
+                <div class="page-title">{title}</div>
             </div>
         </div>
         <div class="hero-card">
-            <div class="hero-title">{title}</div>
+            <div class="hero-title">OMNI SPD Insights Hub</div>
             <div class="hero-sub">OMNI Co-relation</div>
         </div>
         """,
