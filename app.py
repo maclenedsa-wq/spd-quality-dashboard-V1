@@ -97,6 +97,8 @@ DISPLAY_LABELS = {
     "Non Material Interaction": "Non-Material Interaction",
     "Threatened to Escalate": "Escalation Threat",
 }
+ROLE_VIEWS = ["Leadership", "Managers", "Training", "Operations"]
+COMPARE_MODES = ["None", "Team / Vendor", "Campaign", "SPD Band"]
 
 
 def inject_css() -> None:
@@ -575,6 +577,21 @@ def filter_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
             help="Controls the primary sorting used in executive and diagnostic views.",
         )
         top_n = st.slider("Parameters to highlight", min_value=5, max_value=12, value=8)
+        role_view = st.selectbox("Role lens", ROLE_VIEWS, help="Tailors the executive action guidance for a specific audience.")
+        compare_mode = st.selectbox("Compare mode", COMPARE_MODES, help="Compare two groups side by side in the executive view.")
+        compare_left = ""
+        compare_right = ""
+        if compare_mode != "None":
+            compare_options = get_compare_options(df, compare_mode)
+            if len(compare_options) >= 2:
+                compare_left = st.selectbox("Compare A", compare_options, key="compare_left")
+                compare_right = st.selectbox(
+                    "Compare B",
+                    [item for item in compare_options if item != compare_left] or compare_options,
+                    key="compare_right",
+                )
+            else:
+                st.caption("Not enough groups available for comparison under current data.")
 
     filtered = df.copy()
     if selected_campaign:
@@ -609,6 +626,10 @@ def filter_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
         "selected_priorities": selected_priorities,
         "ranking_basis": ranking_basis,
         "top_n": top_n,
+        "role_view": role_view,
+        "compare_mode": compare_mode,
+        "compare_left": compare_left,
+        "compare_right": compare_right,
     }
     return filtered, settings
 
@@ -633,6 +654,7 @@ def render_filter_summary(df: pd.DataFrame, settings: dict[str, object], paramet
     chips = [
         f"{settings['parameter_view']}",
         f"{settings['outlier_mode']}",
+        f"{settings['role_view']} lens",
         f"SPD {settings['spd_range'][0]:.1f}-{settings['spd_range'][1]:.1f}",
         f"Quality {settings['quality_range'][0]:.0f}-{settings['quality_range'][1]:.0f}",
         f"{len(parameter_metrics)} drivers in scope",
@@ -643,6 +665,8 @@ def render_filter_summary(df: pd.DataFrame, settings: dict[str, object], paramet
         chips.append(f"{len(settings['selected_team'])} teams")
     if settings["selected_agents"]:
         chips.append(f"{len(settings['selected_agents'])} agents")
+    if settings["compare_mode"] != "None" and settings["compare_left"] and settings["compare_right"]:
+        chips.append(f"{settings['compare_left']} vs {settings['compare_right']}")
 
     st.markdown(
         f"""
@@ -696,6 +720,147 @@ def render_parameter_overview(parameter_metrics: pd.DataFrame, top_n: int) -> No
             height=320,
         )
     section_close()
+
+
+def get_binary_rate(series: pd.Series) -> float:
+    clean = pd.to_numeric(series, errors="coerce").dropna()
+    if clean.empty:
+        return np.nan
+    scale = 100.0 if clean.max() <= 1.0 else 1.0
+    return float(clean.mean() * scale)
+
+
+def get_phase1_kpis(df: pd.DataFrame, team_metrics: pd.DataFrame, agent_risks: pd.DataFrame) -> dict[str, float | str]:
+    positive_intent_rate = get_binary_rate(
+        df[["Positive", ".positive_intent_needs_follow_up"]].max(axis=1)
+        if {"Positive", ".positive_intent_needs_follow_up"}.issubset(df.columns)
+        else pd.Series(dtype=float)
+    )
+    payment_completion_rate = get_binary_rate(df[".payment_done"]) if ".payment_done" in df.columns else np.nan
+    follow_up_rate = get_binary_rate(df[".follow_up_required"]) if ".follow_up_required" in df.columns else np.nan
+    unresolved_rate = get_binary_rate(
+        df[[".unresolved", ".threatened_to_escalate", ".escalated"]].max(axis=1)
+        if {".unresolved", ".threatened_to_escalate", ".escalated"}.issubset(df.columns)
+        else pd.Series(dtype=float)
+    )
+    resolved_rate = get_binary_rate(df[".resolved"]) if ".resolved" in df.columns else np.nan
+    resolution_effectiveness = resolved_rate - unresolved_rate if pd.notna(resolved_rate) and pd.notna(unresolved_rate) else np.nan
+    team_consistency = 100 - normalize(team_metrics["Consistency Score"]).mean() * 100 if not team_metrics.empty else np.nan
+    coaching_priority = (
+        ((agent_risks["Priority Bucket"] == "Fix Now").mean() * 100)
+        + ((agent_risks["Priority Bucket"] == "Coach Now").mean() * 60)
+        if not agent_risks.empty
+        else np.nan
+    )
+
+    return {
+        "Positive Intent Rate": positive_intent_rate,
+        "Payment Completion Rate": payment_completion_rate,
+        "Follow-Up Rate": follow_up_rate,
+        "Unresolved Risk Rate": unresolved_rate,
+        "Resolution Effectiveness": resolution_effectiveness,
+        "Team Consistency Index": team_consistency,
+        "Coaching Priority Index": coaching_priority,
+    }
+
+
+def format_metric_value(value: float, suffix: str = "%", decimals: int = 1) -> str:
+    if pd.isna(value):
+        return "-"
+    return f"{value:.{decimals}f}{suffix}"
+
+
+def get_compare_options(df: pd.DataFrame, compare_mode: str) -> list[str]:
+    if compare_mode == "Team / Vendor":
+        return sorted(df["Team / Vendor"].dropna().unique().tolist())
+    if compare_mode == "Campaign":
+        return sorted(df["Campaign"].dropna().unique().tolist())
+    if compare_mode == "SPD Band":
+        return ["Low", "Medium", "High"]
+    return []
+
+
+def build_comparison_frame(df: pd.DataFrame, compare_mode: str, left_value: str, right_value: str) -> pd.DataFrame:
+    if compare_mode == "None" or not left_value or not right_value:
+        return pd.DataFrame()
+    compare_df = df.copy()
+    compare_df["Compare Group"] = np.where(compare_df[compare_mode] == left_value, left_value, compare_df[compare_mode])
+    compare_df = compare_df[compare_df[compare_mode].isin([left_value, right_value])].copy()
+    summary = []
+    for label, group in compare_df.groupby(compare_mode):
+        summary.append(
+            {
+                "Group": label,
+                "Avg SPD": group["SPD"].mean(),
+                "Avg Quality": group["Overall Quality Score"].mean(),
+                "Positive Intent Rate": get_binary_rate(
+                    group[["Positive", ".positive_intent_needs_follow_up"]].max(axis=1)
+                ) if {"Positive", ".positive_intent_needs_follow_up"}.issubset(group.columns) else np.nan,
+                "Payment Completion Rate": get_binary_rate(group[".payment_done"]) if ".payment_done" in group.columns else np.nan,
+                "Unresolved Risk Rate": get_binary_rate(
+                    group[[".unresolved", ".threatened_to_escalate", ".escalated"]].max(axis=1)
+                ) if {".unresolved", ".threatened_to_escalate", ".escalated"}.issubset(group.columns) else np.nan,
+            }
+        )
+    return pd.DataFrame(summary)
+
+
+def get_exception_tables(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    if df.empty:
+        return {}
+
+    low_spd_cut = df["SPD"].quantile(0.3)
+    high_spd_cut = df["SPD"].quantile(0.7)
+
+    unresolved_signal = (
+        df[[".unresolved", ".threatened_to_escalate", ".escalated"]].max(axis=1)
+        if {".unresolved", ".threatened_to_escalate", ".escalated"}.issubset(df.columns)
+        else pd.Series([np.nan] * len(df), index=df.index)
+    )
+    closure_signal = (
+        df[[".payment_done", ".resolved"]].max(axis=1)
+        if {".payment_done", ".resolved"}.issubset(df.columns)
+        else pd.Series([np.nan] * len(df), index=df.index)
+    )
+    followup_signal = (
+        df[[".follow_up_required", ".positive_intent_needs_follow_up"]].max(axis=1)
+        if {".follow_up_required", ".positive_intent_needs_follow_up"}.issubset(df.columns)
+        else pd.Series([np.nan] * len(df), index=df.index)
+    )
+
+    base_cols = ["Agent Name", "Team / Vendor", "SPD", "Overall Quality Score"]
+    exceptions = {
+        "Low SPD + High Unresolved": df.loc[(df["SPD"] <= low_spd_cut) & (unresolved_signal >= 1), base_cols].copy(),
+        "High Potential + Low Closure": df.loc[(df["SPD"] >= high_spd_cut) & (closure_signal < 1), base_cols].copy(),
+        "Weak Listening + Follow-Up Leakage": df.loc[(df["Listening"] < df["Listening"].median()) & (followup_signal >= 1), base_cols].copy(),
+    }
+    for key, table in exceptions.items():
+        if not table.empty:
+            exceptions[key] = table.sort_values("SPD", ascending=(key != "High Potential + Low Closure")).reset_index(drop=True)
+    return exceptions
+
+
+def get_role_summary(role_view: str, snapshot: dict[str, str], phase1_kpis: dict[str, float | str], team_metrics: pd.DataFrame) -> tuple[str, str]:
+    lead_team = team_metrics.iloc[0]["Team / Vendor"] if not team_metrics.empty else "current focus team"
+    if role_view == "Managers":
+        return (
+            "Managers should work the lowest-SPD coaching queue first.",
+            f"Focus on follow-up leakage, unresolved risk, and the top driver gaps in {lead_team}.",
+        )
+    if role_view == "Training":
+        return (
+            "Training should prioritize the weakest high-impact behavior.",
+            f"Use coaching around {snapshot['lowest_parameter']} while tracking the coaching priority index at {format_metric_value(phase1_kpis['Coaching Priority Index'])}.",
+        )
+    if role_view == "Operations":
+        return (
+            "Operations should reduce friction before adding more activity.",
+            f"Watch unresolved risk at {format_metric_value(phase1_kpis['Unresolved Risk Rate'])} and review consistency breakdowns in {lead_team}.",
+        )
+    return (
+        "Leadership should manage the business through risk, opportunity, and momentum.",
+        f"Positive intent is at {format_metric_value(phase1_kpis['Positive Intent Rate'])}, while payment completion sits at {format_metric_value(phase1_kpis['Payment Completion Rate'])}.",
+    )
 
 
 def get_parameter_metrics(df: pd.DataFrame, parameter_catalog: dict[str, str]) -> pd.DataFrame:
@@ -945,36 +1110,49 @@ def executive_brief_page(
     df: pd.DataFrame,
     parameter_metrics: pd.DataFrame,
     team_metrics: pd.DataFrame,
+    agent_risks: pd.DataFrame,
     outlier_mode: str,
     parameter_view: str,
     settings: dict[str, object],
 ) -> None:
     snapshot = decision_snapshot(df, parameter_metrics, team_metrics, outlier_mode, parameter_view)
+    phase1_kpis = get_phase1_kpis(df, team_metrics, agent_risks)
+    comparison = build_comparison_frame(
+        df,
+        settings["compare_mode"],
+        settings["compare_left"],
+        settings["compare_right"],
+    )
+    exceptions = get_exception_tables(df)
+    role_headline, role_detail = get_role_summary(settings["role_view"], snapshot, phase1_kpis, team_metrics)
     hero(
         "Executive Brief",
         f"{selection_label(df)} | {outlier_mode} | {parameter_view} | Decision focus: what is happening, why, and what leadership should do next",
     )
     render_filter_summary(df, settings, parameter_metrics)
 
-    strongest = parameter_metrics.iloc[0]
     weakest = parameter_metrics.sort_values("Average Score").iloc[0]
     st.markdown('<div class="kpi-row">', unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         metric_card("Avg SPD", f"{df['SPD'].mean():.2f}", "Current sales productivity")
     with c2:
-        metric_card("Avg Quality Score", f"{df['Overall Quality Score'].mean():.2f}", "Quality is not the full story")
+        metric_card(
+            "Positive Intent / Payment",
+            f"{format_metric_value(phase1_kpis['Positive Intent Rate'])} / {format_metric_value(phase1_kpis['Payment Completion Rate'])}",
+            "Intent creation vs closure conversion",
+        )
     with c3:
         metric_card(
-            "Strongest Driver",
-            display_label(strongest["Parameter"]),
-            f"Driver score {strongest['Driver Score']:.0f} | variance explained {strongest['SPD Variance Explained %']:.1f}%",
+            "Risk / Follow-Up",
+            f"{format_metric_value(phase1_kpis['Unresolved Risk Rate'])} / {format_metric_value(phase1_kpis['Follow-Up Rate'])}",
+            "Unresolved risk and pending follow-up load",
         )
     with c4:
         metric_card(
-            "Risk And Coverage",
-            f"{display_label(weakest['Parameter'])} | {df['Agent Name'].nunique()} agents",
-            f"{len(parameter_metrics)} drivers | ranked by {settings['ranking_basis']}",
+            "Coaching / Consistency",
+            f"{format_metric_value(phase1_kpis['Coaching Priority Index'])} / {format_metric_value(phase1_kpis['Team Consistency Index'])}",
+            f"{df['Agent Name'].nunique()} agents | {len(parameter_metrics)} drivers in scope",
         )
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1070,6 +1248,68 @@ def executive_brief_page(
         st.write(
             f"Give Training ownership of `{snapshot['lowest_parameter']}`, Ops ownership of the highest-risk team, and Managers ownership of `{snapshot['top_driver']}` coaching."
         )
+    section_close()
+
+    c1, c2 = st.columns([1.1, 1.0], gap="large")
+    with c1:
+        section_open()
+        st.markdown("**Top Risks and Opportunities**")
+        risk_opportunity = pd.DataFrame(
+            [
+                {"Signal": "Positive intent rate", "Value": format_metric_value(phase1_kpis["Positive Intent Rate"]), "Readout": "Opportunity pipeline being created"},
+                {"Signal": "Payment completion rate", "Value": format_metric_value(phase1_kpis["Payment Completion Rate"]), "Readout": "Closure efficiency from current leads"},
+                {"Signal": "Unresolved risk rate", "Value": format_metric_value(phase1_kpis["Unresolved Risk Rate"]), "Readout": "Calls or cases likely to drag conversion"},
+                {"Signal": "Resolution effectiveness", "Value": format_metric_value(phase1_kpis["Resolution Effectiveness"]), "Readout": "Resolved minus unresolved risk balance"},
+            ]
+        )
+        st.dataframe(risk_opportunity, use_container_width=True, height=220)
+        st.markdown("**Role recommendation**")
+        st.write(f"{role_headline} {role_detail}")
+        section_close()
+    with c2:
+        section_open()
+        st.markdown("**Compare Mode**")
+        if comparison.empty:
+            st.info("Choose a compare mode and two groups in the sidebar to unlock side-by-side comparison.")
+        else:
+            compare_fig = go.Figure()
+            compare_fig.add_bar(name="Avg SPD", x=comparison["Group"], y=comparison["Avg SPD"], marker_color=BLUE)
+            compare_fig.add_bar(name="Payment Completion Rate", x=comparison["Group"], y=comparison["Payment Completion Rate"], marker_color=GREEN)
+            compare_fig.add_bar(name="Unresolved Risk Rate", x=comparison["Group"], y=comparison["Unresolved Risk Rate"], marker_color=RED)
+            compare_fig.update_layout(
+                barmode="group",
+                paper_bgcolor=SURFACE,
+                plot_bgcolor=SURFACE,
+                margin=dict(l=10, r=10, t=20, b=10),
+                legend_orientation="h",
+                legend_y=1.1,
+            )
+            st.plotly_chart(compare_fig, use_container_width=True)
+            st.dataframe(
+                comparison.style.format(
+                    {
+                        "Avg SPD": "{:.2f}",
+                        "Avg Quality": "{:.2f}",
+                        "Positive Intent Rate": "{:.1f}",
+                        "Payment Completion Rate": "{:.1f}",
+                        "Unresolved Risk Rate": "{:.1f}",
+                    }
+                ),
+                use_container_width=True,
+                height=180,
+            )
+        section_close()
+
+    section_open()
+    st.markdown("**Phase 1 Exceptions**")
+    e1, e2, e3 = st.columns(3, gap="large")
+    for col, (title, table) in zip([e1, e2, e3], exceptions.items()):
+        with col:
+            st.markdown(f"**{title}**")
+            if table.empty:
+                st.caption("No exception cases in current filters.")
+            else:
+                st.dataframe(table.head(8).style.format({"SPD": "{:.2f}", "Overall Quality Score": "{:.2f}"}), use_container_width=True, height=220)
     section_close()
 
 
@@ -1240,6 +1480,16 @@ def action_center_page(
     lowest_score = parameter_metrics.sort_values("Average Score").iloc[0]
     top_driver = parameter_metrics.iloc[0]
     team_issue = team_metrics.iloc[0] if not team_metrics.empty else None
+    phase1_kpis = get_phase1_kpis(df, team_metrics, agent_risks)
+    role_headline, role_detail = get_role_summary(
+        settings["role_view"],
+        {
+            "lowest_parameter": lowest_score["Parameter"],
+            "top_driver": top_driver["Parameter"],
+        },
+        phase1_kpis,
+        team_metrics,
+    )
 
     training_col, ops_col, mgr_col = st.columns(3, gap="large")
 
@@ -1392,6 +1642,24 @@ def action_center_page(
     )
     section_close()
 
+    section_open()
+    st.markdown(f"**{settings['role_view']} Priority View**")
+    st.write(role_headline)
+    st.write(role_detail)
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {"KPI": "Positive Intent Rate", "Value": format_metric_value(phase1_kpis["Positive Intent Rate"])},
+                {"KPI": "Payment Completion Rate", "Value": format_metric_value(phase1_kpis["Payment Completion Rate"])},
+                {"KPI": "Unresolved Risk Rate", "Value": format_metric_value(phase1_kpis["Unresolved Risk Rate"])},
+                {"KPI": "Coaching Priority Index", "Value": format_metric_value(phase1_kpis["Coaching Priority Index"])},
+            ]
+        ),
+        use_container_width=True,
+        height=210,
+    )
+    section_close()
+
 
 def diagnostics_page(
     df: pd.DataFrame, parameter_metrics: pd.DataFrame, parameter_view: str, settings: dict[str, object]
@@ -1511,7 +1779,7 @@ def main() -> None:
     )
 
     if page == "Executive Brief":
-        executive_brief_page(filtered, parameter_metrics, team_metrics, outlier_mode, parameter_view, settings)
+        executive_brief_page(filtered, parameter_metrics, team_metrics, agent_risks, outlier_mode, parameter_view, settings)
     elif page == "Root Cause":
         root_cause_page(filtered, parameter_metrics, team_metrics, selected_catalog, parameter_view, settings)
     elif page == "Action Center":
