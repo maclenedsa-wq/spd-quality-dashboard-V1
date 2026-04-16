@@ -105,6 +105,8 @@ DISPLAY_LABELS = {
 ROLE_VIEWS = ["Leadership", "Managers", "Training", "Operations"]
 COMPARE_MODES = ["None", "Team / Vendor", "Campaign", "SPD Band"]
 SIMULATION_STEPS = [-2.0, -1.0, 0.0, 1.0, 2.0]
+MID_BG = "#F3F6F2"
+CHART_COLORS = [BLUE, GREEN, RED, AMBER, TEAL]
 
 
 def inject_css() -> None:
@@ -446,6 +448,10 @@ def display_label(label: str) -> str:
     return DISPLAY_LABELS.get(label, label)
 
 
+def apply_table_style(styler):
+    return styler.set_properties(**{"background-color": SURFACE, "color": TEXT, "border-color": "#D7E3DB"})
+
+
 def section_open() -> None:
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
 
@@ -733,7 +739,7 @@ def render_parameter_overview(parameter_metrics: pd.DataFrame, top_n: int) -> No
         )
         fig.update_layout(
             paper_bgcolor=SURFACE,
-            plot_bgcolor=SURFACE,
+            plot_bgcolor=MID_BG,
             coloraxis_showscale=False,
             margin=dict(l=10, r=10, t=50, b=10),
         )
@@ -742,9 +748,9 @@ def render_parameter_overview(parameter_metrics: pd.DataFrame, top_n: int) -> No
         insight_df = top_metrics[["Display Parameter", "Driver Score", "Correlation", "Gap %", "Action Priority"]].copy()
         insight_df = insight_df.rename(columns={"Display Parameter": "Parameter"})
         st.dataframe(
-            insight_df.style.format(
+            apply_table_style(insight_df.style.format(
                 {"Driver Score": "{:.1f}", "Correlation": "{:.3f}", "Gap %": "{:.1f}"}
-            ),
+            )),
             use_container_width=True,
             height=320,
         )
@@ -1470,7 +1476,7 @@ def executive_brief_page(
         add_trendline(fig, scatter_df, "Overall Quality Score", "SPD")
         fig.update_layout(
             paper_bgcolor=SURFACE,
-            plot_bgcolor=SURFACE,
+            plot_bgcolor=MID_BG,
             margin=dict(l=10, r=10, t=52, b=10),
             legend_title_text="SPD Band",
             height=520,
@@ -1518,7 +1524,7 @@ def executive_brief_page(
     fig.update_layout(
         title=f"Driver ranking: top {settings['top_n']} parameters in current analysis lens",
         paper_bgcolor=SURFACE,
-        plot_bgcolor=SURFACE,
+        plot_bgcolor=MID_BG,
         xaxis_title=str(settings["ranking_basis"]),
         yaxis_title="",
         margin=dict(l=10, r=10, t=50, b=10),
@@ -1558,7 +1564,7 @@ def executive_brief_page(
                 {"Signal": "Resolution effectiveness", "Value": format_metric_value(phase1_kpis["Resolution Effectiveness"]), "Readout": "Resolved minus unresolved risk balance"},
             ]
         )
-        st.dataframe(risk_opportunity, use_container_width=True, height=220)
+        st.dataframe(apply_table_style(risk_opportunity.style), use_container_width=True, height=220)
         st.markdown("**Role recommendation**")
         st.write(f"{role_headline} {role_detail}")
         section_close()
@@ -1575,14 +1581,14 @@ def executive_brief_page(
             compare_fig.update_layout(
                 barmode="group",
                 paper_bgcolor=SURFACE,
-                plot_bgcolor=SURFACE,
+                plot_bgcolor=MID_BG,
                 margin=dict(l=10, r=10, t=20, b=10),
                 legend_orientation="h",
                 legend_y=1.1,
             )
             st.plotly_chart(compare_fig, use_container_width=True)
             st.dataframe(
-                comparison.style.format(
+                apply_table_style(comparison.style.format(
                     {
                         "Avg SPD": "{:.2f}",
                         "Avg Quality": "{:.2f}",
@@ -1590,7 +1596,7 @@ def executive_brief_page(
                         "Payment Completion Rate": "{:.1f}",
                         "Unresolved Risk Rate": "{:.1f}",
                     }
-                ),
+                )),
                 use_container_width=True,
                 height=180,
             )
@@ -1605,7 +1611,7 @@ def executive_brief_page(
             if table.empty:
                 st.caption("No exception cases in current filters.")
             else:
-                st.dataframe(table.head(8).style.format({"SPD": "{:.2f}", "Overall Quality Score": "{:.2f}"}), use_container_width=True, height=220)
+                st.dataframe(apply_table_style(table.head(8).style.format({"SPD": "{:.2f}", "Overall Quality Score": "{:.2f}"})), use_container_width=True, height=220)
     section_close()
 
     c1, c2 = st.columns([1.0, 1.1], gap="large")
@@ -1622,7 +1628,7 @@ def executive_brief_page(
                 {"Measure": "Model strength", "Value": confidence["Model strength"]},
             ]
         )
-        st.dataframe(benchmark_df, use_container_width=True, height=245)
+        st.dataframe(apply_table_style(benchmark_df.style), use_container_width=True, height=245)
         st.caption(confidence["Trend status"])
         section_close()
     with c2:
@@ -1647,16 +1653,16 @@ def executive_brief_page(
             )
             seg_fig.update_layout(
                 paper_bgcolor=SURFACE,
-                plot_bgcolor=SURFACE,
+                plot_bgcolor=MID_BG,
                 coloraxis_showscale=False,
                 margin=dict(l=10, r=10, t=45, b=10),
             )
             st.plotly_chart(seg_fig, use_container_width=True)
             st.dataframe(
-                segment_df[["Agent Name", "Team / Vendor", "SPD", "Expected SPD", "SPD Gap vs Expected", "Performance Segment"]]
+                apply_table_style(segment_df[["Agent Name", "Team / Vendor", "SPD", "Expected SPD", "SPD Gap vs Expected", "Performance Segment"]]
                 .sort_values("SPD Gap vs Expected")
                 .head(10)
-                .style.format({"SPD": "{:.2f}", "Expected SPD": "{:.2f}", "SPD Gap vs Expected": "{:.2f}"}),
+                .style.format({"SPD": "{:.2f}", "Expected SPD": "{:.2f}", "SPD Gap vs Expected": "{:.2f}"})),
                 use_container_width=True,
                 height=210,
             )
@@ -1698,7 +1704,7 @@ def root_cause_page(
         title="Gap analysis: how high performers differ from low performers",
         barmode="group",
         paper_bgcolor=SURFACE,
-        plot_bgcolor=SURFACE,
+        plot_bgcolor=MID_BG,
         xaxis_title="Average score",
         yaxis_title="",
         margin=dict(l=10, r=10, t=50, b=10),
@@ -1720,14 +1726,14 @@ def root_cause_page(
                 z=heat.values,
                 x=heat.columns.tolist(),
                 y=heat.index.tolist(),
-                colorscale=[[0, "#FEE2E2"], [0.5, "#F8FAFC"], [1, "#DCFCE7"]],
+                colorscale=[[0, ROSE], [0.5, MID_BG], [1, MINT]],
                 hovertemplate="Team: %{y}<br>Parameter: %{x}<br>Avg Score: %{z:.2f}<extra></extra>",
             )
         )
         heat_fig.update_layout(
             title="Team-by-parameter heatmap",
             paper_bgcolor=SURFACE,
-            plot_bgcolor=SURFACE,
+            plot_bgcolor=MID_BG,
             margin=dict(l=10, r=10, t=50, b=10),
         )
         st.plotly_chart(heat_fig, use_container_width=True)
@@ -1753,7 +1759,7 @@ def root_cause_page(
         )
         decomp.update_layout(
             paper_bgcolor=SURFACE,
-            plot_bgcolor=SURFACE,
+            plot_bgcolor=MID_BG,
             coloraxis_showscale=False,
             margin=dict(l=10, r=10, t=50, b=10),
         )
@@ -1773,7 +1779,7 @@ def root_cause_page(
             default="Green",
         )
         st.dataframe(
-            failure[
+            apply_table_style(failure[
                 [
                     "Team / Vendor",
                     "Avg SPD",
@@ -1791,7 +1797,7 @@ def root_cause_page(
                     "Consistency Score": "{:.2f}",
                     "Priority Score": "{:.1f}",
                 }
-            ),
+            )),
             use_container_width=True,
             height=290,
         )
@@ -1928,7 +1934,7 @@ def action_center_page(
         radar.update_traces(fill="toself")
         radar.update_layout(
             paper_bgcolor=SURFACE,
-            polar=dict(bgcolor=SURFACE),
+            polar=dict(bgcolor=MID_BG),
             margin=dict(l=10, r=10, t=50, b=10),
         )
         st.plotly_chart(radar, use_container_width=True)
@@ -1950,7 +1956,7 @@ def action_center_page(
         opp.update_traces(textposition="top center")
         opp.update_layout(
             paper_bgcolor=SURFACE,
-            plot_bgcolor=SURFACE,
+            plot_bgcolor=MID_BG,
             xaxis_title="Current average score",
             yaxis_title="Driver score",
             margin=dict(l=10, r=10, t=50, b=10),
@@ -1962,7 +1968,7 @@ def action_center_page(
     priority_agents = agent_risks.copy()
     if not priority_agents.empty:
         st.dataframe(
-            priority_agents[
+            apply_table_style(priority_agents[
                 [
                     "Agent Name",
                     "Team / Vendor",
@@ -1973,7 +1979,7 @@ def action_center_page(
                     "Coach On",
                     "Gap Score",
                 ]
-            ].style.format({"SPD": "{:.2f}", "Gap Score": "{:.2f}"}),
+            ].style.format({"SPD": "{:.2f}", "Gap Score": "{:.2f}"})),
             use_container_width=True,
             height=300,
         )
@@ -1997,14 +2003,14 @@ def action_center_page(
     st.write(role_headline)
     st.write(role_detail)
     st.dataframe(
-        pd.DataFrame(
+        apply_table_style(pd.DataFrame(
             [
                 {"KPI": "Positive Intent Rate", "Value": format_metric_value(phase1_kpis["Positive Intent Rate"])},
                 {"KPI": "Payment Completion Rate", "Value": format_metric_value(phase1_kpis["Payment Completion Rate"])},
                 {"KPI": "Unresolved Risk Rate", "Value": format_metric_value(phase1_kpis["Unresolved Risk Rate"])},
                 {"KPI": "Coaching Priority Index", "Value": format_metric_value(phase1_kpis["Coaching Priority Index"])},
             ]
-        ),
+        ).style),
         use_container_width=True,
         height=210,
     )
@@ -2027,14 +2033,14 @@ def diagnostics_page(
             ["Parameter", "Average Score", "Correlation", "Gap %", "Driver Score", "Action Priority"]
         ].copy()
         st.dataframe(
-            driver_table.style.format(
+            apply_table_style(driver_table.style.format(
                 {
                     "Average Score": "{:.2f}",
                     "Correlation": "{:.3f}",
                     "Gap %": "{:.1f}",
                     "Driver Score": "{:.1f}",
                 }
-            ),
+            )),
             use_container_width=True,
             height=320,
         )
@@ -2093,7 +2099,7 @@ def diagnostics_page(
         fig.update_layout(
             title="Parameter-by-parameter SPD relationship",
             paper_bgcolor=SURFACE,
-            plot_bgcolor=SURFACE,
+            plot_bgcolor=MID_BG,
             height=max(420, rows * 310),
             margin=dict(l=10, r=10, t=55, b=10),
         )
@@ -2150,12 +2156,12 @@ def performance_lab_page(
         section_open()
         st.markdown("**Confidence Readout**")
         st.dataframe(
-            pd.DataFrame(
+            apply_table_style(pd.DataFrame(
                 [
                     {"Dimension": key, "Status": value}
                     for key, value in confidence.items()
                 ]
-            ),
+            ).style),
             use_container_width=True,
             height=220,
         )
@@ -2182,15 +2188,15 @@ def performance_lab_page(
         add_trendline(seg_fig, segment_df, "Expected SPD", "SPD")
         seg_fig.update_layout(
             paper_bgcolor=SURFACE,
-            plot_bgcolor=SURFACE,
+            plot_bgcolor=MID_BG,
             margin=dict(l=10, r=10, t=45, b=10),
             height=460,
         )
         st.plotly_chart(seg_fig, use_container_width=True)
         st.dataframe(
-            segment_df[["Agent Name", "Team / Vendor", "SPD", "Expected SPD", "SPD Gap vs Expected", "Performance Segment"]]
+            apply_table_style(segment_df[["Agent Name", "Team / Vendor", "SPD", "Expected SPD", "SPD Gap vs Expected", "Performance Segment"]]
             .sort_values("SPD Gap vs Expected")
-            .style.format({"SPD": "{:.2f}", "Expected SPD": "{:.2f}", "SPD Gap vs Expected": "{:.2f}"}),
+            .style.format({"SPD": "{:.2f}", "Expected SPD": "{:.2f}", "SPD Gap vs Expected": "{:.2f}"})),
             use_container_width=True,
             height=280,
         )
@@ -2243,7 +2249,7 @@ def trends_page(df: pd.DataFrame, settings: dict[str, object]) -> None:
         trend_fig.update_layout(
             title="SPD and Quality trend by snapshot date",
             paper_bgcolor=SURFACE,
-            plot_bgcolor=SURFACE,
+            plot_bgcolor=MID_BG,
             margin=dict(l=10, r=10, t=45, b=10),
             height=420,
         )
@@ -2262,7 +2268,7 @@ def trends_page(df: pd.DataFrame, settings: dict[str, object]) -> None:
         outcome_fig.update_layout(
             title="Outcome trend by snapshot date",
             paper_bgcolor=SURFACE,
-            plot_bgcolor=SURFACE,
+            plot_bgcolor=MID_BG,
             margin=dict(l=10, r=10, t=45, b=10),
             height=420,
         )
@@ -2275,7 +2281,7 @@ def trends_page(df: pd.DataFrame, settings: dict[str, object]) -> None:
             st.info("Team momentum will appear once at least two snapshot dates exist.")
         else:
             st.dataframe(
-                team_momentum.style.format({"Previous SPD": "{:.2f}", "Latest SPD": "{:.2f}", "Momentum": "{:+.2f}"}),
+                apply_table_style(team_momentum.style.format({"Previous SPD": "{:.2f}", "Latest SPD": "{:.2f}", "Momentum": "{:+.2f}"})),
                 use_container_width=True,
                 height=360,
             )
@@ -2289,7 +2295,7 @@ def trends_page(df: pd.DataFrame, settings: dict[str, object]) -> None:
             st.info("Trend alerts will activate once at least two snapshot dates exist.")
         else:
             st.dataframe(
-                anomalies.style.format({"Delta": "{:+.2f}", "Threshold": "{:+.2f}"}),
+                apply_table_style(anomalies.style.format({"Delta": "{:+.2f}", "Threshold": "{:+.2f}"})),
                 use_container_width=True,
                 height=240,
             )
@@ -2301,7 +2307,7 @@ def trends_page(df: pd.DataFrame, settings: dict[str, object]) -> None:
             st.info("Team watchlist will activate once at least two snapshot dates exist.")
         else:
             st.dataframe(
-                team_alerts[["Team / Vendor", "Previous SPD", "Latest SPD", "SPD Delta", "Unresolved Delta", "Payment Delta", "Alert"]]
+                apply_table_style(team_alerts[["Team / Vendor", "Previous SPD", "Latest SPD", "SPD Delta", "Unresolved Delta", "Payment Delta", "Alert"]]
                 .style.format(
                     {
                         "Previous SPD": "{:.2f}",
@@ -2310,7 +2316,7 @@ def trends_page(df: pd.DataFrame, settings: dict[str, object]) -> None:
                         "Unresolved Delta": "{:+.1f}",
                         "Payment Delta": "{:+.1f}",
                     }
-                ),
+                )),
                 use_container_width=True,
                 height=240,
             )
