@@ -411,7 +411,7 @@ def hero(title: str, subtitle: str) -> None:
         f"""
         <div class="page-header">
             <div>
-                <div class="page-title">OMNI Sales Performance Dashboard</div>
+                <div class="page-title">OMNI SPD Insights Hub</div>
             </div>
         </div>
         <div class="hero-card">
