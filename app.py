@@ -1541,6 +1541,172 @@ def get_executive_badges(df: pd.DataFrame) -> list[tuple[str, str]]:
     return badges[:4]
 
 
+def get_role_hub_payload(
+    role_view: str,
+    df: pd.DataFrame,
+    parameter_metrics: pd.DataFrame,
+    team_metrics: pd.DataFrame,
+    agent_risks: pd.DataFrame,
+    phase1_kpis: dict[str, float | str],
+) -> dict[str, object]:
+    top_driver = parameter_metrics.iloc[0]
+    weakest_parameter = parameter_metrics.sort_values("Average Score").iloc[0]
+    top_team = team_metrics.iloc[0] if not team_metrics.empty else None
+    watch_team = top_team["Team / Vendor"] if top_team is not None else "current selection"
+    priority_agents = agent_risks[agent_risks["Priority Bucket"].isin(["Fix Now", "Coach Now"])].copy()
+
+    if role_view == "Leadership":
+        headline = "Run the business through closure, risk, and momentum."
+        summary = (
+            f"Payment completion is {format_metric_value(phase1_kpis['Payment Completion Rate'])}, "
+            f"unresolved risk is {format_metric_value(phase1_kpis['Unresolved Risk Rate'])}, and the strongest driver is "
+            f"{display_label(top_driver['Parameter'])}."
+        )
+        cards = [
+            ("Revenue quality", f"Protect closure quality while scaling {display_label(top_driver['Parameter'])}."),
+            ("Business risk", f"Watch unresolved leakage in {watch_team}."),
+            ("Leadership move", "Review whether the main blockers are coaching, process, or both."),
+        ]
+        table = pd.DataFrame(
+            [
+                {"Signal": "Payment Completion Rate", "Value": format_metric_value(phase1_kpis["Payment Completion Rate"])},
+                {"Signal": "Unresolved Risk Rate", "Value": format_metric_value(phase1_kpis["Unresolved Risk Rate"])},
+                {"Signal": "Positive Intent Rate", "Value": format_metric_value(phase1_kpis["Positive Intent Rate"])},
+            ]
+        )
+    elif role_view == "Managers":
+        headline = "Coach the lowest-SPD queue before broad training."
+        summary = (
+            f"{len(priority_agents)} agents currently sit in the immediate coaching queue, with "
+            f"{display_label(top_driver['Parameter'])} as the strongest improvement lever."
+        )
+        cards = [
+            ("Primary coaching move", f"Coach {display_label(top_driver['Parameter'])} first."),
+            ("Queue size", f"{len(priority_agents)} agents need Fix Now or Coach Now support."),
+            ("Team to watch", f"Execution stability is weakest in {watch_team}."),
+        ]
+        table = priority_agents[["Agent Name", "Team / Vendor", "Priority Bucket", "Coach On", "Gap Score"]].head(10)
+    elif role_view == "Training":
+        headline = "Rebuild the weakest high-impact behavior."
+        summary = (
+            f"{display_label(weakest_parameter['Parameter'])} is the weakest score in the current lens, while "
+            f"{display_label(top_driver['Parameter'])} remains the strongest driver of SPD."
+        )
+        cards = [
+            ("Curriculum focus", display_label(weakest_parameter["Parameter"])),
+            ("Behavior benchmark", display_label(top_driver["Parameter"])),
+            ("Training move", "Refresh modules around the biggest high-vs-low gap first."),
+        ]
+        table = parameter_metrics[["Parameter", "Average Score", "Gap %", "Driver Score", "Action Priority"]].head(10).copy()
+        table["Parameter"] = table["Parameter"].map(display_label)
+    else:
+        headline = "Reduce process friction before adding more activity."
+        summary = (
+            f"Operations should focus on unresolved risk at {format_metric_value(phase1_kpis['Unresolved Risk Rate'])} "
+            f"and follow-up leakage at {format_metric_value(phase1_kpis['Follow-Up Rate'])}, especially in {watch_team}."
+        )
+        cards = [
+            ("Operational hotspot", watch_team),
+            ("Risk signal", format_metric_value(phase1_kpis["Unresolved Risk Rate"])),
+            ("Ops move", "Review handoff, follow-up, and closure friction."),
+        ]
+        table = team_metrics[["Team / Vendor", "Avg SPD", "Consistency Score", "Weakest Parameter", "Risk Flag"]].head(10).copy() if not team_metrics.empty else pd.DataFrame()
+        if not table.empty:
+            table["Weakest Parameter"] = table["Weakest Parameter"].map(display_label)
+
+    return {
+        "headline": headline,
+        "summary": summary,
+        "cards": cards,
+        "table": table,
+    }
+
+
+def get_intervention_tracking(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    if "Snapshot Date" not in df.columns or df["Snapshot Date"].nunique() < 2:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+    dates = sorted(df["Snapshot Date"].dropna().unique().tolist())
+    previous_date, latest_date = dates[-2], dates[-1]
+    previous = df[df["Snapshot Date"] == previous_date].copy()
+    latest = df[df["Snapshot Date"] == latest_date].copy()
+    if previous.empty or latest.empty:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+    previous_metrics = get_parameter_metrics(previous, get_parameter_catalog("All Parameters"))
+    previous_risks = get_agent_risks(previous, previous_metrics)
+    prior_queue = previous_risks[previous_risks["Priority Bucket"].isin(["Fix Now", "Coach Now"])].copy()
+    if prior_queue.empty:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+    join_cols = ["Agent Name", "Team / Vendor", "SPD", "Overall Quality Score"]
+    latest_join = latest[["Agent Name", "Team / Vendor", "SPD", "Overall Quality Score"]].rename(
+        columns={"SPD": "Latest SPD", "Overall Quality Score": "Latest Quality"}
+    )
+    cohort = prior_queue.merge(
+        previous[join_cols].rename(columns={"SPD": "Previous SPD", "Overall Quality Score": "Previous Quality"}),
+        on=["Agent Name", "Team / Vendor"],
+        how="left",
+    ).merge(latest_join, on=["Agent Name", "Team / Vendor"], how="inner")
+    if cohort.empty:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+    cohort["SPD Delta"] = cohort["Latest SPD"] - cohort["Previous SPD"]
+    cohort["Quality Delta"] = cohort["Latest Quality"] - cohort["Previous Quality"]
+    cohort["Intervention Outcome"] = np.select(
+        [
+            (cohort["SPD Delta"] >= 0.20) & (cohort["Quality Delta"] >= 0),
+            (cohort["SPD Delta"] <= -0.20),
+        ],
+        ["Improving", "Declining"],
+        default="Monitor",
+    )
+
+    tracked_agents = set(cohort["Agent Name"].tolist())
+    control_previous = previous[~previous["Agent Name"].isin(tracked_agents)].copy()
+    control_latest = latest[~latest["Agent Name"].isin(tracked_agents)].copy()
+    control = control_previous[["Agent Name", "Team / Vendor", "SPD", "Overall Quality Score"]].rename(
+        columns={"SPD": "Previous SPD", "Overall Quality Score": "Previous Quality"}
+    ).merge(
+        control_latest[["Agent Name", "Team / Vendor", "SPD", "Overall Quality Score"]].rename(
+            columns={"SPD": "Latest SPD", "Overall Quality Score": "Latest Quality"}
+        ),
+        on=["Agent Name", "Team / Vendor"],
+        how="inner",
+    )
+    if not control.empty:
+        control["SPD Delta"] = control["Latest SPD"] - control["Previous SPD"]
+        control["Quality Delta"] = control["Latest Quality"] - control["Previous Quality"]
+
+    summary_rows = [
+        {
+            "Cohort": "Previous priority queue",
+            "Agents": int(cohort["Agent Name"].nunique()),
+            "Average SPD Delta": cohort["SPD Delta"].mean(),
+            "Average Quality Delta": cohort["Quality Delta"].mean(),
+            "Improving Share %": (cohort["Intervention Outcome"] == "Improving").mean() * 100,
+        }
+    ]
+    if not control.empty:
+        summary_rows.append(
+            {
+                "Cohort": "Control population",
+                "Agents": int(control["Agent Name"].nunique()),
+                "Average SPD Delta": control["SPD Delta"].mean(),
+                "Average Quality Delta": control["Quality Delta"].mean(),
+                "Improving Share %": np.nan,
+            }
+        )
+
+    team_summary = (
+        cohort.groupby("Team / Vendor", as_index=False)
+        .agg({"Agent Name": "nunique", "SPD Delta": "mean", "Quality Delta": "mean"})
+        .rename(columns={"Agent Name": "Agents"})
+        .sort_values("SPD Delta", ascending=False)
+    )
+    return pd.DataFrame(summary_rows), cohort.sort_values("SPD Delta", ascending=False), team_summary
+
+
 def get_parameter_metrics(df: pd.DataFrame, parameter_catalog: dict[str, str]) -> pd.DataFrame:
     rows = []
     for label, column in parameter_catalog.items():
@@ -2784,6 +2950,150 @@ def trends_page(df: pd.DataFrame, settings: dict[str, object]) -> None:
         section_close()
 
 
+def role_hub_page(
+    df: pd.DataFrame,
+    parameter_metrics: pd.DataFrame,
+    team_metrics: pd.DataFrame,
+    agent_risks: pd.DataFrame,
+    settings: dict[str, object],
+) -> None:
+    hero(
+        "Role Hub",
+        f"{settings['role_view']} landing page with the most relevant priorities, queues, and action signals",
+    )
+    render_filter_summary(df, settings, parameter_metrics)
+    phase1_kpis = get_phase1_kpis(df, team_metrics, agent_risks)
+    payload = get_role_hub_payload(settings["role_view"], df, parameter_metrics, team_metrics, agent_risks, phase1_kpis)
+
+    st.markdown(f"**{settings['role_view']} Headline**")
+    st.write(payload["headline"])
+    st.caption(payload["summary"])
+
+    c1, c2, c3 = st.columns(3, gap="large")
+    for col, card in zip([c1, c2, c3], payload["cards"]):
+        with col:
+            st.markdown(
+                f"""
+                <div class="mini-card">
+                    <div class="mini-title">{card[0]}</div>
+                    <div class="mini-body">{card[1]}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    section_open()
+    st.markdown(f"**{settings['role_view']} Priority Table**")
+    table = payload["table"]
+    if table.empty:
+        st.info("No role-specific table is available for the current filter selection.")
+    else:
+        st.dataframe(apply_table_style(table.style), use_container_width=True, height=320)
+    section_close()
+
+    section_open()
+    st.markdown("**Role KPI Strip**")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        metric_card("Positive Intent", format_metric_value(phase1_kpis["Positive Intent Rate"]), "Pipeline being created")
+    with c2:
+        metric_card("Payment Completion", format_metric_value(phase1_kpis["Payment Completion Rate"]), "Closure strength")
+    with c3:
+        metric_card("Unresolved Risk", format_metric_value(phase1_kpis["Unresolved Risk Rate"]), "Potential drag on conversion")
+    with c4:
+        metric_card("Coaching Priority", format_metric_value(phase1_kpis["Coaching Priority Index"]), "Immediate coaching queue pressure")
+    section_close()
+
+
+def intervention_tracker_page(df: pd.DataFrame, settings: dict[str, object]) -> None:
+    hero(
+        "Intervention Tracker",
+        "Track whether the previous priority cohort is improving in SPD and quality between the last two snapshots",
+    )
+    render_filter_summary(df, settings, pd.DataFrame([{"Parameter": "Intervention", "Correlation": np.nan}]))
+
+    summary, cohort, team_summary = get_intervention_tracking(df)
+    if summary.empty:
+        st.info("Intervention tracking needs at least two snapshots and a prior Fix Now / Coach Now cohort to compare.")
+        return
+
+    c1, c2, c3 = st.columns(3)
+    priority_row = summary.iloc[0]
+    with c1:
+        metric_card("Tracked Agents", str(int(priority_row["Agents"])), "Previous snapshot priority queue")
+    with c2:
+        metric_card("SPD Delta", f"{priority_row['Average SPD Delta']:+.2f}", "Average improvement vs previous snapshot")
+    with c3:
+        metric_card("Quality Delta", f"{priority_row['Average Quality Delta']:+.2f}", "Average quality movement in tracked cohort")
+
+    c1, c2 = st.columns([1.0, 1.1], gap="large")
+    with c1:
+        section_open()
+        st.markdown("**Cohort Summary**")
+        st.dataframe(
+            apply_table_style(summary.style.format({
+                "Average SPD Delta": "{:+.2f}",
+                "Average Quality Delta": "{:+.2f}",
+                "Improving Share %": "{:.1f}",
+            })),
+            use_container_width=True,
+            height=220,
+        )
+        section_close()
+    with c2:
+        section_open()
+        st.markdown("**Intervention Movement by Team**")
+        if team_summary.empty:
+            st.info("No team-level intervention tracking is available yet.")
+        else:
+            fig = go.Figure()
+            fig.add_bar(name="SPD Delta", x=team_summary["Team / Vendor"], y=team_summary["SPD Delta"], marker_color=BLUE)
+            fig.add_bar(name="Quality Delta", x=team_summary["Team / Vendor"], y=team_summary["Quality Delta"], marker_color=GREEN)
+            fig.update_layout(
+                barmode="group",
+                paper_bgcolor=SURFACE,
+                plot_bgcolor=MID_BG,
+                margin=dict(l=10, r=10, t=35, b=10),
+                height=320,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        section_close()
+
+    section_open()
+    st.markdown("**Tracked Agent Outcomes**")
+    st.dataframe(
+        apply_table_style(
+            cohort[
+                [
+                    "Agent Name",
+                    "Team / Vendor",
+                    "Priority Bucket",
+                    "Coach On",
+                    "Previous SPD",
+                    "Latest SPD",
+                    "SPD Delta",
+                    "Previous Quality",
+                    "Latest Quality",
+                    "Quality Delta",
+                    "Intervention Outcome",
+                ]
+            ].style.format(
+                {
+                    "Previous SPD": "{:.2f}",
+                    "Latest SPD": "{:.2f}",
+                    "SPD Delta": "{:+.2f}",
+                    "Previous Quality": "{:.2f}",
+                    "Latest Quality": "{:.2f}",
+                    "Quality Delta": "{:+.2f}",
+                }
+            )
+        ),
+        use_container_width=True,
+        height=360,
+    )
+    section_close()
+
+
 def main() -> None:
     inject_css()
     df = load_data()
@@ -2809,11 +3119,13 @@ def main() -> None:
 
     page = st.sidebar.radio(
         "Navigation",
-        ["Executive Brief", "Trends", "Root Cause", "Action Center", "Diagnostics", "Performance Lab"],
+        ["Executive Brief", "Role Hub", "Trends", "Root Cause", "Action Center", "Diagnostics", "Performance Lab", "Intervention Tracker"],
     )
 
     if page == "Executive Brief":
         executive_brief_page(filtered, modeled_df, parameter_metrics, team_metrics, agent_risks, model_meta, outlier_mode, parameter_view, settings)
+    elif page == "Role Hub":
+        role_hub_page(filtered, parameter_metrics, team_metrics, agent_risks, settings)
     elif page == "Trends":
         trends_page(filtered, settings)
     elif page == "Root Cause":
@@ -2822,6 +3134,8 @@ def main() -> None:
         action_center_page(filtered, parameter_metrics, team_metrics, agent_risks, parameter_view, settings)
     elif page == "Performance Lab":
         performance_lab_page(filtered, modeled_df, parameter_metrics, model_meta, settings)
+    elif page == "Intervention Tracker":
+        intervention_tracker_page(filtered, settings)
     else:
         diagnostics_page(filtered, parameter_metrics, parameter_view, settings)
 
