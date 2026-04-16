@@ -103,8 +103,15 @@ DISPLAY_LABELS = {
     "Threatened to Escalate": "Escalation Threat",
 }
 ROLE_VIEWS = ["Leadership", "Managers", "Training", "Operations"]
-COMPARE_MODES = ["None", "Team / Vendor", "Campaign", "SPD Band"]
+COMPARE_MODES = ["None", "Team / Vendor", "Campaign", "SPD Band", "Snapshot Date"]
 SIMULATION_STEPS = [-2.0, -1.0, 0.0, 1.0, 2.0]
+PRESET_MODES = [
+    "Custom",
+    "Low SPD Rescue",
+    "Coaching Priorities",
+    "Escalation Watch",
+    "Follow-Up Opportunity",
+]
 MID_BG = "#F3F6F2"
 CHART_COLORS = [BLUE, GREEN, RED, AMBER, TEAL]
 
@@ -319,6 +326,73 @@ def inject_css() -> None:
         }}
         .kpi-row {{
             margin-bottom: 0.75rem;
+        }}
+        .control-grid {{
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.75rem;
+            margin-bottom: 0.8rem;
+        }}
+        .signal-card {{
+            background: linear-gradient(135deg, #FFFDF8 0%, #F3F8F5 100%);
+            border: 1px solid #D7E3DB;
+            border-radius: 18px;
+            padding: 0.9rem 0.95rem;
+            box-shadow: 0 10px 24px rgba(20, 40, 29, 0.05);
+            min-height: 128px;
+        }}
+        .signal-card.risk {{
+            background: linear-gradient(135deg, #FFF8F5 0%, #FFF1ED 100%);
+            border-color: #F0C7BC;
+        }}
+        .signal-card.opportunity {{
+            background: linear-gradient(135deg, #F8FFFB 0%, #ECFAF3 100%);
+            border-color: #C8E8D8;
+        }}
+        .signal-card.watch {{
+            background: linear-gradient(135deg, #FFFDF8 0%, #FBF4E3 100%);
+            border-color: #ECD9A1;
+        }}
+        .signal-title {{
+            color: {MUTED};
+            font-size: 0.74rem;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            margin-bottom: 0.28rem;
+        }}
+        .signal-headline {{
+            color: {TEXT};
+            font-size: 1rem;
+            font-weight: 700;
+            line-height: 1.2;
+            margin-bottom: 0.28rem;
+        }}
+        .signal-detail {{
+            color: {MUTED};
+            font-size: 0.82rem;
+            line-height: 1.45;
+        }}
+        .role-strip {{
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.75rem;
+        }}
+        .mini-card {{
+            background: {SURFACE};
+            border: 1px solid #DCE6DE;
+            border-radius: 16px;
+            padding: 0.8rem 0.9rem;
+        }}
+        .mini-title {{
+            color: {TEXT};
+            font-size: 0.9rem;
+            font-weight: 700;
+            margin-bottom: 0.35rem;
+        }}
+        .mini-body {{
+            color: {TEXT};
+            font-size: 0.84rem;
+            line-height: 1.45;
         }}
         [data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] > div,
         [data-testid="stSidebar"] .stMultiSelect div[data-baseweb="select"] > div {{
@@ -550,10 +624,50 @@ def filter_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
     teams = sorted(df["Team / Vendor"].dropna().unique().tolist())
     campaigns = sorted(df["Campaign"].dropna().unique().tolist())
     snapshot_labels = sorted(df["Snapshot Label"].dropna().unique().tolist(), reverse=True)
+    preset_mode = st.sidebar.selectbox(
+        "Analysis preset",
+        PRESET_MODES,
+        help="Apply a focused analysis mode for faster diagnosis. You can still override filters after selecting a preset.",
+    )
+
+    preset_parameter_view = "Quality Score"
+    preset_role_view = "Leadership"
+    preset_themes: list[str] | None = None
+    preset_priorities = ["Fix Now", "Coach Next", "Sustain"]
+    preset_bands = ["Low", "Medium", "High"]
+    preset_ranking_basis = "Driver Score"
+    preset_compare_mode = "None"
+    preset_compare_left = ""
+    preset_compare_right = ""
+
+    if preset_mode == "Low SPD Rescue":
+        preset_role_view = "Managers"
+        preset_priorities = ["Fix Now", "Coach Next"]
+        preset_bands = ["Low"]
+        preset_ranking_basis = "Gap"
+    elif preset_mode == "Coaching Priorities":
+        preset_role_view = "Training"
+        preset_priorities = ["Fix Now", "Coach Next"]
+        preset_ranking_basis = "Driver Score"
+    elif preset_mode == "Escalation Watch":
+        preset_parameter_view = "Detailed Parameters"
+        preset_role_view = "Operations"
+        preset_themes = ["Escalation Risk", "Resolution Risk", "Resolution Progress"]
+        preset_priorities = ["Fix Now", "Coach Next"]
+        preset_ranking_basis = "Correlation"
+    elif preset_mode == "Follow-Up Opportunity":
+        preset_parameter_view = "Detailed Parameters"
+        preset_role_view = "Managers"
+        preset_themes = ["Follow Up Pipeline", "Intent Signals", "Closure Signals"]
+        preset_priorities = ["Fix Now", "Coach Next", "Sustain"]
+        preset_ranking_basis = "Gap"
 
     with st.sidebar.expander("Snapshot", expanded=True):
         is_historical_mode = bool("Data Mode" in df.columns and not df.empty and df["Data Mode"].iloc[0] == "Historical")
-        default_snapshot = snapshot_labels if is_historical_mode else snapshot_labels[:1] if snapshot_labels else []
+        if preset_mode != "Custom" and len(snapshot_labels) >= 2:
+            default_snapshot = snapshot_labels[:2]
+        else:
+            default_snapshot = snapshot_labels if is_historical_mode else snapshot_labels[:1] if snapshot_labels else []
         selected_snapshots = st.multiselect("Snapshot Date", snapshot_labels, default=default_snapshot)
     with st.sidebar.expander("Population", expanded=True):
         selected_campaign = st.multiselect("Campaign", campaigns)
@@ -580,7 +694,7 @@ def filter_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
         selected_band = st.multiselect(
             "SPD Band",
             ["Low", "Medium", "High"],
-            default=["Low", "Medium", "High"],
+            default=preset_bands,
         )
         spd_range = st.slider(
             "SPD range",
@@ -603,33 +717,40 @@ def filter_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
     parameter_view = st.sidebar.radio(
         "Parameter scope",
         ["Quality Score", "Detailed Parameters", "All Parameters"],
+        index=["Quality Score", "Detailed Parameters", "All Parameters"].index(preset_parameter_view),
         help="Switch between the original quality pillars, the additional detailed parameters, or a combined SPD driver view.",
     )
     available_themes = get_available_themes(get_parameter_catalog(parameter_view))
+    default_themes = [theme for theme in (preset_themes or available_themes) if theme in available_themes] or available_themes
     with st.sidebar.expander("Analysis Lens", expanded=True):
-        selected_themes = st.multiselect("Parameter themes", available_themes, default=available_themes)
+        selected_themes = st.multiselect("Parameter themes", available_themes, default=default_themes)
         selected_priorities = st.multiselect(
             "Action priority",
             ["Fix Now", "Coach Next", "Sustain"],
-            default=["Fix Now", "Coach Next", "Sustain"],
+            default=preset_priorities,
         )
         ranking_basis = st.selectbox(
             "Rank drivers by",
             ["Driver Score", "Correlation", "Gap", "Average Score"],
+            index=["Driver Score", "Correlation", "Gap", "Average Score"].index(preset_ranking_basis),
             help="Controls the primary sorting used in executive and diagnostic views.",
         )
         top_n = st.slider("Parameters to highlight", min_value=5, max_value=12, value=8)
-        role_view = st.selectbox("Role lens", ROLE_VIEWS, help="Tailors the executive action guidance for a specific audience.")
-        compare_mode = st.selectbox("Compare mode", COMPARE_MODES, help="Compare two groups side by side in the executive view.")
+        role_view = st.selectbox("Role lens", ROLE_VIEWS, index=ROLE_VIEWS.index(preset_role_view), help="Tailors the executive action guidance for a specific audience.")
+        compare_mode = st.selectbox("Compare mode", COMPARE_MODES, index=COMPARE_MODES.index(preset_compare_mode), help="Compare two groups side by side in the executive view.")
         compare_left = ""
         compare_right = ""
         if compare_mode != "None":
             compare_options = get_compare_options(df, compare_mode)
             if len(compare_options) >= 2:
-                compare_left = st.selectbox("Compare A", compare_options, key="compare_left")
+                default_left = preset_compare_left if preset_compare_left in compare_options else compare_options[0]
+                compare_left = st.selectbox("Compare A", compare_options, index=compare_options.index(default_left), key="compare_left")
+                right_options = [item for item in compare_options if item != compare_left] or compare_options
+                default_right = preset_compare_right if preset_compare_right in right_options else right_options[0]
                 compare_right = st.selectbox(
                     "Compare B",
-                    [item for item in compare_options if item != compare_left] or compare_options,
+                    right_options,
+                    index=right_options.index(default_right),
                     key="compare_right",
                 )
             else:
@@ -687,6 +808,7 @@ def filter_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
         "compare_mode": compare_mode,
         "compare_left": compare_left,
         "compare_right": compare_right,
+        "preset_mode": preset_mode,
         **sim_controls,
     }
     return filtered, settings
@@ -710,6 +832,7 @@ def apply_parameter_filters(parameter_metrics: pd.DataFrame, settings: dict[str,
 
 def render_filter_summary(df: pd.DataFrame, settings: dict[str, object], parameter_metrics: pd.DataFrame) -> None:
     chips = [
+        f"{settings['preset_mode']} preset" if settings.get("preset_mode") and settings["preset_mode"] != "Custom" else "Custom lens",
         f"{len(settings['selected_snapshots'])} snapshot(s)" if settings["selected_snapshots"] else "All snapshots",
         f"{settings['parameter_view']}",
         f"{settings['outlier_mode']}",
@@ -836,6 +959,8 @@ def get_compare_options(df: pd.DataFrame, compare_mode: str) -> list[str]:
         return sorted(df["Campaign"].dropna().unique().tolist())
     if compare_mode == "SPD Band":
         return ["Low", "Medium", "High"]
+    if compare_mode == "Snapshot Date":
+        return sorted(df["Snapshot Label"].dropna().unique().tolist(), reverse=True)
     return []
 
 
@@ -843,10 +968,11 @@ def build_comparison_frame(df: pd.DataFrame, compare_mode: str, left_value: str,
     if compare_mode == "None" or not left_value or not right_value:
         return pd.DataFrame()
     compare_df = df.copy()
-    compare_df["Compare Group"] = np.where(compare_df[compare_mode] == left_value, left_value, compare_df[compare_mode])
-    compare_df = compare_df[compare_df[compare_mode].isin([left_value, right_value])].copy()
+    compare_column = "Snapshot Label" if compare_mode == "Snapshot Date" else compare_mode
+    compare_df["Compare Group"] = np.where(compare_df[compare_column] == left_value, left_value, compare_df[compare_column])
+    compare_df = compare_df[compare_df[compare_column].isin([left_value, right_value])].copy()
     summary = []
-    for label, group in compare_df.groupby(compare_mode):
+    for label, group in compare_df.groupby(compare_column):
         summary.append(
             {
                 "Group": label,
@@ -859,9 +985,14 @@ def build_comparison_frame(df: pd.DataFrame, compare_mode: str, left_value: str,
                 "Unresolved Risk Rate": get_binary_rate(
                     group[[".unresolved", ".threatened_to_escalate", ".escalated"]].max(axis=1)
                 ) if {".unresolved", ".threatened_to_escalate", ".escalated"}.issubset(group.columns) else np.nan,
+                "Follow-Up Rate": get_binary_rate(group[".follow_up_required"]) if ".follow_up_required" in group.columns else np.nan,
             }
         )
-    return pd.DataFrame(summary)
+    comparison = pd.DataFrame(summary)
+    if len(comparison) == 2:
+        ordered = comparison.set_index("Group").reindex([left_value, right_value]).reset_index()
+        return ordered
+    return comparison
 
 
 def get_exception_tables(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
@@ -897,6 +1028,199 @@ def get_exception_tables(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
         if not table.empty:
             exceptions[key] = table.sort_values("SPD", ascending=(key != "High Potential + Low Closure")).reset_index(drop=True)
     return exceptions
+
+
+def get_control_tower_summary(
+    df: pd.DataFrame,
+    parameter_metrics: pd.DataFrame,
+    team_metrics: pd.DataFrame,
+    phase1_kpis: dict[str, float | str],
+) -> dict[str, dict[str, str]]:
+    latest_team = team_metrics.iloc[0] if not team_metrics.empty else None
+    top_driver = parameter_metrics.iloc[0]
+    weakest_parameter = parameter_metrics.sort_values("Average Score").iloc[0]
+    trend = get_trend_summary(df)
+
+    if len(trend) >= 2:
+        delta = trend["SPD"].iloc[-1] - trend["SPD"].iloc[-2]
+        movement_headline = f"SPD {delta:+.2f} vs previous snapshot"
+        movement_detail = (
+            f"Quality moved to {trend['Overall Quality Score'].iloc[-1]:.2f} and payment completion is "
+            f"{format_metric_value(trend['Payment Completion Rate'].iloc[-1])}."
+        )
+    else:
+        movement_headline = f"SPD stable at {df['SPD'].mean():.2f}"
+        movement_detail = "Add one more dated snapshot to unlock movement and momentum tracking."
+
+    unresolved = phase1_kpis["Unresolved Risk Rate"]
+    payment = phase1_kpis["Payment Completion Rate"]
+    positive_intent = phase1_kpis["Positive Intent Rate"]
+    follow_up = phase1_kpis["Follow-Up Rate"]
+    risk_headline = f"{format_metric_value(unresolved)} unresolved risk"
+    risk_detail = (
+        f"{display_label(weakest_parameter['Parameter'])} is the weakest behavior and "
+        f"{latest_team['Team / Vendor'] if latest_team is not None else 'the current selection'} is the most impacted team."
+    )
+    opportunity_headline = f"{format_metric_value(positive_intent)} intent creation"
+    opportunity_detail = (
+        f"{display_label(top_driver['Parameter'])} is the strongest SPD lever, while payment conversion sits at "
+        f"{format_metric_value(payment)}."
+    )
+    action_headline = (
+        f"{latest_team['Team / Vendor']} needs action now"
+        if latest_team is not None
+        else "Current selection needs focused action"
+    )
+    action_detail = (
+        f"Managers should reduce follow-up leakage at {format_metric_value(follow_up)} and coach "
+        f"{display_label(top_driver['Parameter'])} first."
+    )
+
+    return {
+        "movement": {"headline": movement_headline, "detail": movement_detail, "tone": "watch"},
+        "risk": {"headline": risk_headline, "detail": risk_detail, "tone": "risk"},
+        "opportunity": {"headline": opportunity_headline, "detail": opportunity_detail, "tone": "opportunity"},
+        "action": {"headline": action_headline, "detail": action_detail, "tone": "watch"},
+    }
+
+
+def get_risk_opportunity_engine(
+    df: pd.DataFrame,
+    parameter_metrics: pd.DataFrame,
+    team_metrics: pd.DataFrame,
+    agent_risks: pd.DataFrame,
+    phase1_kpis: dict[str, float | str],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    top_driver = parameter_metrics.iloc[0]
+    weakest_parameter = parameter_metrics.sort_values("Average Score").iloc[0]
+    highest_gap = parameter_metrics.sort_values("Gap", ascending=False).iloc[0]
+    top_team = team_metrics.iloc[0] if not team_metrics.empty else None
+    top_fix_now = agent_risks[agent_risks["Priority Bucket"].isin(["Fix Now", "Coach Now"])].head(1)
+    top_agent = top_fix_now.iloc[0] if not top_fix_now.empty else None
+
+    risks = [
+        {
+            "Priority": "Critical Risk",
+            "Signal": "Unresolved and escalation drag",
+            "Readout": format_metric_value(phase1_kpis["Unresolved Risk Rate"]),
+            "Why it matters": "Conversion can stall even when intent exists.",
+            "Owner": "Operations",
+            "Next action": "Audit unresolved, escalated, and threatened-to-escalate interactions first.",
+        },
+        {
+            "Priority": "Execution Risk",
+            "Signal": f"Lowest-scoring behavior: {display_label(weakest_parameter['Parameter'])}",
+            "Readout": f"{weakest_parameter['Average Score']:.1f}",
+            "Why it matters": "Weak foundational behavior suppresses all downstream conversion.",
+            "Owner": "Training",
+            "Next action": f"Redesign refreshers around {display_label(weakest_parameter['Parameter'])}.",
+        },
+    ]
+    if top_team is not None:
+        risks.append(
+            {
+                "Priority": "Team Risk",
+                "Signal": f"Most impacted team: {top_team['Team / Vendor']}",
+                "Readout": f"SPD {top_team['Avg SPD']:.2f}",
+                "Why it matters": f"Priority score is {top_team['Priority Score']:.1f} with {top_team['Risk Flag'].lower()}.",
+                "Owner": "Managers + Ops",
+                "Next action": f"Stabilize {display_label(top_team['Weakest Parameter'])} and execution consistency.",
+            }
+        )
+    if top_agent is not None:
+        risks.append(
+            {
+                "Priority": "Coaching Queue",
+                "Signal": f"Immediate agent focus: {top_agent['Agent Name']}",
+                "Readout": f"Gap {top_agent['Gap Score']:.2f}",
+                "Why it matters": "Frontline recovery opportunity is concentrated, not broad-based.",
+                "Owner": top_agent["Owner"],
+                "Next action": f"Coach on {top_agent['Coach On']}.",
+            }
+        )
+
+    opportunities = [
+        {
+            "Priority": "Growth Lever",
+            "Signal": f"Strongest driver: {display_label(top_driver['Parameter'])}",
+            "Readout": f"{top_driver['Driver Score']:.1f}",
+            "Why it matters": f"Explains {top_driver['SPD Variance Explained %']:.1f}% of SPD variance in this slice.",
+            "Owner": "Managers",
+            "Next action": f"Scale coaching on {display_label(top_driver['Parameter'])} across low-SPD cohorts.",
+        },
+        {
+            "Priority": "Intent Opportunity",
+            "Signal": "Positive intent pipeline",
+            "Readout": format_metric_value(phase1_kpis["Positive Intent Rate"]),
+            "Why it matters": "Intent is being created; the win comes from reducing leakage before payment.",
+            "Owner": "Managers + Ops",
+            "Next action": "Work follow-up and resolution leakage before adding more activity.",
+        },
+        {
+            "Priority": "High/Low Gap",
+            "Signal": f"Largest performance gap: {display_label(highest_gap['Parameter'])}",
+            "Readout": f"{highest_gap['Gap %']:.1f}%",
+            "Why it matters": "This is where high performers most clearly separate from low performers.",
+            "Owner": "Training",
+            "Next action": "Use this gap as the main behavior benchmark in coaching calibrations.",
+        },
+        {
+            "Priority": "Closure Opportunity",
+            "Signal": "Payment completion",
+            "Readout": format_metric_value(phase1_kpis["Payment Completion Rate"]),
+            "Why it matters": "Intent already exists in the funnel, so closure quality can lift SPD quickly.",
+            "Owner": "Leadership",
+            "Next action": "Review whether closure blockers are process-driven or coaching-driven.",
+        },
+    ]
+
+    return pd.DataFrame(risks), pd.DataFrame(opportunities)
+
+
+def get_role_action_plan(
+    role_view: str,
+    parameter_metrics: pd.DataFrame,
+    team_metrics: pd.DataFrame,
+    phase1_kpis: dict[str, float | str],
+    agent_risks: pd.DataFrame,
+) -> pd.DataFrame:
+    top_driver = parameter_metrics.iloc[0]
+    weakest_parameter = parameter_metrics.sort_values("Average Score").iloc[0]
+    top_team = team_metrics.iloc[0] if not team_metrics.empty else None
+    priority_agents = agent_risks[agent_risks["Priority Bucket"].isin(["Fix Now", "Coach Now"])]
+    lead_team = top_team["Team / Vendor"] if top_team is not None else "current selection"
+
+    rows = [
+        {
+            "Role": "Leadership",
+            "Primary focus": "Protect conversion while scaling the strongest driver",
+            "Immediate move": f"Review {display_label(top_driver['Parameter'])} and payment conversion together.",
+            "Watch metric": format_metric_value(phase1_kpis["Payment Completion Rate"]),
+        },
+        {
+            "Role": "Managers",
+            "Primary focus": "Coach the lowest-SPD queue before broad training",
+            "Immediate move": f"Target {len(priority_agents)} agents on {display_label(top_driver['Parameter'])}.",
+            "Watch metric": format_metric_value(phase1_kpis["Coaching Priority Index"]),
+        },
+        {
+            "Role": "Training",
+            "Primary focus": "Repair the weakest high-impact behavior",
+            "Immediate move": f"Refresh modules for {display_label(weakest_parameter['Parameter'])}.",
+            "Watch metric": f"{weakest_parameter['Average Score']:.1f}",
+        },
+        {
+            "Role": "Operations",
+            "Primary focus": "Remove process friction in the main risk pocket",
+            "Immediate move": f"Investigate unresolved and follow-up leakage in {lead_team}.",
+            "Watch metric": format_metric_value(phase1_kpis["Unresolved Risk Rate"]),
+        },
+    ]
+    role_df = pd.DataFrame(rows)
+    if role_view in role_df["Role"].tolist():
+        role_df["Priority"] = np.where(role_df["Role"] == role_view, "Current lens", "Also monitor")
+        role_df = role_df[["Priority", "Role", "Primary focus", "Immediate move", "Watch metric"]]
+    return role_df
 
 
 def get_role_summary(role_view: str, snapshot: dict[str, str], phase1_kpis: dict[str, float | str], team_metrics: pd.DataFrame) -> tuple[str, str]:
@@ -998,11 +1322,19 @@ def get_confidence_summary(df: pd.DataFrame, model_meta: dict[str, float]) -> di
     else:
         outlier_label = "Sensitive"
 
+    snapshot_count = int(df["Snapshot Date"].nunique()) if "Snapshot Date" in df.columns else 0
+    if snapshot_count >= 4:
+        trend_status = f"Historical trends active across {snapshot_count} snapshots"
+    elif snapshot_count >= 2:
+        trend_status = f"Early trend view active across {snapshot_count} snapshots"
+    else:
+        trend_status = "Trend-ready only: add more dated snapshots for momentum and anomaly depth"
+
     return {
         "Sample confidence": sample_label,
         "Model strength": model_label,
         "Outlier sensitivity": outlier_label,
-        "Trend status": "Trend-ready only: no historical date field in current source",
+        "Trend status": trend_status,
     }
 
 
@@ -1183,6 +1515,30 @@ def get_team_anomaly_table(df: pd.DataFrame) -> pd.DataFrame:
         default="Stable",
     )
     return merged.sort_values(["Alert", "SPD Delta"]).reset_index(drop=True)
+
+
+def get_executive_badges(df: pd.DataFrame) -> list[tuple[str, str]]:
+    badges: list[tuple[str, str]] = []
+    anomalies = get_snapshot_anomalies(df)
+    team_momentum = get_team_momentum(df)
+
+    if not anomalies.empty:
+        triggered = anomalies[anomalies["Triggered"]].head(2)
+        for _, row in triggered.iterrows():
+            tone = "pill-red" if row["Severity"] == "Red" else "pill-amber"
+            badges.append((tone, f"{row['Alert']} {row['Delta']:+.1f}"))
+
+    if not team_momentum.empty:
+        top_riser = team_momentum.iloc[0]
+        if pd.notna(top_riser["Momentum"]):
+            badges.append(("pill-green", f"Top momentum {top_riser['Team / Vendor']} {top_riser['Momentum']:+.2f}"))
+        top_faller = team_momentum.sort_values("Momentum").iloc[0]
+        if pd.notna(top_faller["Momentum"]) and top_faller["Momentum"] < 0:
+            badges.append(("pill-red", f"Watch {top_faller['Team / Vendor']} {top_faller['Momentum']:+.2f}"))
+
+    if not badges:
+        badges.append(("pill-green", "No active snapshot alerts yet"))
+    return badges[:4]
 
 
 def get_parameter_metrics(df: pd.DataFrame, parameter_catalog: dict[str, str]) -> pd.DataFrame:
@@ -1443,6 +1799,11 @@ def executive_brief_page(
     phase1_kpis = get_phase1_kpis(df, team_metrics, agent_risks)
     phase2_benchmarks = get_phase2_benchmarks(df, modeled_df)
     confidence = get_confidence_summary(df, model_meta)
+    control_tower = get_control_tower_summary(df, parameter_metrics, team_metrics, phase1_kpis)
+    risk_engine, opportunity_engine = get_risk_opportunity_engine(
+        df, parameter_metrics, team_metrics, agent_risks, phase1_kpis
+    )
+    executive_badges = get_executive_badges(df)
     comparison = build_comparison_frame(
         df,
         settings["compare_mode"],
@@ -1450,6 +1811,7 @@ def executive_brief_page(
         settings["compare_right"],
     )
     exceptions = get_exception_tables(df)
+    role_plan = get_role_action_plan(settings["role_view"], parameter_metrics, team_metrics, phase1_kpis, agent_risks)
     role_headline, role_detail = get_role_summary(settings["role_view"], snapshot, phase1_kpis, team_metrics)
     hero(
         "Executive Brief",
@@ -1481,6 +1843,42 @@ def executive_brief_page(
             f"{df['Agent Name'].nunique()} agents | {len(parameter_metrics)} drivers in scope",
         )
     st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown(
+        f"""
+        <div class="control-grid">
+            <div class="signal-card {control_tower['movement']['tone']}">
+                <div class="signal-title">Movement</div>
+                <div class="signal-headline">{control_tower['movement']['headline']}</div>
+                <div class="signal-detail">{control_tower['movement']['detail']}</div>
+            </div>
+            <div class="signal-card {control_tower['risk']['tone']}">
+                <div class="signal-title">Biggest Risk</div>
+                <div class="signal-headline">{control_tower['risk']['headline']}</div>
+                <div class="signal-detail">{control_tower['risk']['detail']}</div>
+            </div>
+            <div class="signal-card {control_tower['opportunity']['tone']}">
+                <div class="signal-title">Biggest Opportunity</div>
+                <div class="signal-headline">{control_tower['opportunity']['headline']}</div>
+                <div class="signal-detail">{control_tower['opportunity']['detail']}</div>
+            </div>
+            <div class="signal-card {control_tower['action']['tone']}">
+                <div class="signal-title">Immediate Action</div>
+                <div class="signal-headline">{control_tower['action']['headline']}</div>
+                <div class="signal-detail">{control_tower['action']['detail']}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"""
+        <div style="margin:-0.15rem 0 0.75rem 0;">
+            {''.join(f'<span class="pill {tone}">{label}</span>' for tone, label in executive_badges)}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     left, right = st.columns([2.2, 0.95], gap="medium")
     with left:
@@ -1579,16 +1977,19 @@ def executive_brief_page(
     c1, c2 = st.columns([1.1, 1.0], gap="large")
     with c1:
         section_open()
-        st.markdown("**Top Risks and Opportunities**")
-        risk_opportunity = pd.DataFrame(
-            [
-                {"Signal": "Positive intent rate", "Value": format_metric_value(phase1_kpis["Positive Intent Rate"]), "Readout": "Opportunity pipeline being created"},
-                {"Signal": "Payment completion rate", "Value": format_metric_value(phase1_kpis["Payment Completion Rate"]), "Readout": "Closure efficiency from current leads"},
-                {"Signal": "Unresolved risk rate", "Value": format_metric_value(phase1_kpis["Unresolved Risk Rate"]), "Readout": "Calls or cases likely to drag conversion"},
-                {"Signal": "Resolution effectiveness", "Value": format_metric_value(phase1_kpis["Resolution Effectiveness"]), "Readout": "Resolved minus unresolved risk balance"},
-            ]
+        st.markdown("**Risk and Opportunity Engine**")
+        st.markdown("`Top Risks`")
+        st.dataframe(
+            apply_table_style(risk_engine.style),
+            use_container_width=True,
+            height=245,
         )
-        st.dataframe(apply_table_style(risk_opportunity.style), use_container_width=True, height=220)
+        st.markdown("`Top Opportunities`")
+        st.dataframe(
+            apply_table_style(opportunity_engine.style),
+            use_container_width=True,
+            height=245,
+        )
         st.markdown("**Role recommendation**")
         st.write(f"{role_headline} {role_detail}")
         section_close()
@@ -1602,6 +2003,7 @@ def executive_brief_page(
             compare_fig.add_bar(name="Avg SPD", x=comparison["Group"], y=comparison["Avg SPD"], marker_color=BLUE)
             compare_fig.add_bar(name="Payment Completion Rate", x=comparison["Group"], y=comparison["Payment Completion Rate"], marker_color=GREEN)
             compare_fig.add_bar(name="Unresolved Risk Rate", x=comparison["Group"], y=comparison["Unresolved Risk Rate"], marker_color=RED)
+            compare_fig.add_bar(name="Follow-Up Rate", x=comparison["Group"], y=comparison["Follow-Up Rate"], marker_color=AMBER)
             compare_fig.update_layout(
                 barmode="group",
                 paper_bgcolor=SURFACE,
@@ -1619,12 +2021,47 @@ def executive_brief_page(
                         "Positive Intent Rate": "{:.1f}",
                         "Payment Completion Rate": "{:.1f}",
                         "Unresolved Risk Rate": "{:.1f}",
+                        "Follow-Up Rate": "{:.1f}",
                     }
                 )),
                 use_container_width=True,
                 height=180,
             )
+            if len(comparison) == 2:
+                delta = comparison.iloc[1].copy()
+                baseline = comparison.iloc[0]
+                delta["Avg SPD"] = comparison.iloc[1]["Avg SPD"] - baseline["Avg SPD"]
+                delta["Avg Quality"] = comparison.iloc[1]["Avg Quality"] - baseline["Avg Quality"]
+                delta["Positive Intent Rate"] = comparison.iloc[1]["Positive Intent Rate"] - baseline["Positive Intent Rate"]
+                delta["Payment Completion Rate"] = comparison.iloc[1]["Payment Completion Rate"] - baseline["Payment Completion Rate"]
+                delta["Unresolved Risk Rate"] = comparison.iloc[1]["Unresolved Risk Rate"] - baseline["Unresolved Risk Rate"]
+                delta["Follow-Up Rate"] = comparison.iloc[1]["Follow-Up Rate"] - baseline["Follow-Up Rate"]
+                delta_table = pd.DataFrame(
+                    [
+                        {"Metric": "Avg SPD", "Delta": delta["Avg SPD"]},
+                        {"Metric": "Avg Quality", "Delta": delta["Avg Quality"]},
+                        {"Metric": "Positive Intent Rate", "Delta": delta["Positive Intent Rate"]},
+                        {"Metric": "Payment Completion Rate", "Delta": delta["Payment Completion Rate"]},
+                        {"Metric": "Unresolved Risk Rate", "Delta": delta["Unresolved Risk Rate"]},
+                        {"Metric": "Follow-Up Rate", "Delta": delta["Follow-Up Rate"]},
+                    ]
+                )
+                st.caption(f"Delta: {comparison.iloc[1]['Group']} minus {comparison.iloc[0]['Group']}")
+                st.dataframe(
+                    apply_table_style(delta_table.style.format({"Delta": "{:+.2f}"})),
+                    use_container_width=True,
+                    height=245,
+                )
         section_close()
+
+    section_open()
+    st.markdown("**Role-Based Action Plan**")
+    st.dataframe(
+        apply_table_style(role_plan.style),
+        use_container_width=True,
+        height=230,
+    )
+    section_close()
 
     section_open()
     st.markdown("**Phase 1 Exceptions**")
