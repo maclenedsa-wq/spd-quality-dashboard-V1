@@ -15,8 +15,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("OMNI Sales Performance Dashboard")
-
 DATA_FILE = Path(__file__).parent / "data.xlsx"
 SHEET_NAME = "Health"
 
@@ -89,6 +87,16 @@ THEME_BY_PARAMETER = {
     "Resolved": "Resolution Progress",
     "Threatened to Escalate": "Escalation Risk",
 }
+DISPLAY_LABELS = {
+    "Listening & Understanding Needs": "Listening",
+    "Product Knowledge and Explanation": "Product Knowledge",
+    "Acknowledge & Empathise": "Empathise",
+    "Language, Tone and Professionalism": "Language & Tone",
+    "Positive Intent Needs Follow Up": "Positive Intent Follow Up",
+    "Not Interested in Buying": "Not Interested",
+    "Non Material Interaction": "Non-Material Interaction",
+    "Threatened to Escalate": "Escalation Threat",
+}
 
 
 def inject_css() -> None:
@@ -103,73 +111,100 @@ def inject_css() -> None:
             color: {TEXT};
         }}
         .block-container {{
-            padding-top: 1.2rem;
+            padding-top: 0.5rem;
             padding-bottom: 2rem;
-            max-width: 1500px;
+            max-width: 1460px;
+        }}
+        h1 {{
+            display: none;
+        }}
+        [data-testid="stSidebar"] {{
+            min-width: 300px;
+            max-width: 300px;
         }}
         .hero-card {{
             background: linear-gradient(135deg, {NAVY} 0%, #1E3A8A 100%);
             color: #FFFFFF;
-            border-radius: 24px;
-            padding: 1.25rem 1.35rem;
-            margin-bottom: 1rem;
-            box-shadow: 0 16px 40px rgba(15, 23, 42, 0.18);
+            border-radius: 22px;
+            padding: 0.9rem 1.15rem;
+            margin-bottom: 0.8rem;
+            box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
         }}
         .hero-title {{
-            font-size: 1.35rem;
+            font-size: 1.05rem;
             font-weight: 700;
-            margin-bottom: 0.25rem;
+            margin-bottom: 0.12rem;
         }}
         .hero-sub {{
-            font-size: 0.92rem;
+            font-size: 0.82rem;
             color: rgba(255,255,255,0.78);
+        }}
+        .page-header {{
+            display: flex;
+            align-items: end;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-bottom: 0.45rem;
+        }}
+        .page-title {{
+            color: {TEXT};
+            font-size: 2rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            line-height: 1;
+        }}
+        .page-sub {{
+            color: {MUTED};
+            font-size: 0.84rem;
+            margin-top: 0.18rem;
         }}
         .metric-card {{
             background: {SURFACE};
             border: 1px solid #E5E7EB;
             border-radius: 18px;
-            padding: 1rem 1.05rem;
-            min-height: 126px;
-            box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+            padding: 0.9rem 0.95rem;
+            min-height: 118px;
+            box-shadow: 0 6px 20px rgba(15, 23, 42, 0.05);
         }}
         .metric-label {{
             color: {MUTED};
-            font-size: 0.80rem;
+            font-size: 0.76rem;
             letter-spacing: 0.02em;
-            margin-bottom: 0.35rem;
+            margin-bottom: 0.3rem;
         }}
         .metric-value {{
             color: {TEXT};
-            font-size: 1.85rem;
+            font-size: 1.15rem;
             font-weight: 700;
-            line-height: 1.08;
+            line-height: 1.12;
+            min-height: 2.55em;
         }}
         .metric-sub {{
             color: {MUTED};
-            font-size: 0.82rem;
-            margin-top: 0.45rem;
+            font-size: 0.78rem;
+            margin-top: 0.35rem;
             line-height: 1.35;
         }}
         .section-card {{
             background: {SURFACE};
             border: 1px solid #E5E7EB;
             border-radius: 20px;
-            padding: 1rem 1rem 0.65rem 1rem;
-            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.05);
-            margin-bottom: 1rem;
+            padding: 0.85rem 0.9rem 0.45rem 0.9rem;
+            box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+            margin-bottom: 0.8rem;
         }}
         .insight-card {{
             background: linear-gradient(135deg, #FFFFFF 0%, #F0F7FF 100%);
             border: 1px solid #D8E5F7;
             border-radius: 20px;
-            padding: 1rem 1.05rem;
-            min-height: 455px;
+            padding: 0.95rem 1rem;
+            min-height: 100%;
         }}
         .section-title {{
             color: {TEXT};
-            font-size: 1rem;
+            font-size: 0.98rem;
             font-weight: 700;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.45rem;
         }}
         .tiny-label {{
             color: {MUTED};
@@ -180,9 +215,9 @@ def inject_css() -> None:
         }}
         .insight-line {{
             color: {TEXT};
-            font-size: 0.95rem;
-            line-height: 1.55;
-            margin-bottom: 0.75rem;
+            font-size: 0.9rem;
+            line-height: 1.48;
+            margin-bottom: 0.55rem;
         }}
         .pill {{
             display: inline-block;
@@ -234,9 +269,9 @@ def inject_css() -> None:
             background: linear-gradient(135deg, #FFFFFF 0%, #F7FAFF 100%);
             border: 1px solid #DCE7F5;
             border-radius: 18px;
-            padding: 0.9rem 1rem 0.55rem 1rem;
-            margin-bottom: 1rem;
-            box-shadow: 0 8px 24px rgba(37, 99, 235, 0.08);
+            padding: 0.72rem 0.9rem 0.42rem 0.9rem;
+            margin-bottom: 0.8rem;
+            box-shadow: 0 6px 18px rgba(37, 99, 235, 0.06);
         }}
         .filter-chip {{
             display: inline-block;
@@ -250,13 +285,23 @@ def inject_css() -> None:
             font-size: 0.76rem;
             font-weight: 700;
         }}
-        .subtle-card {{
-            background: linear-gradient(135deg, #FFFFFF 0%, #FBFDFF 100%);
-            border: 1px solid #E5E7EB;
-            border-radius: 18px;
-            padding: 0.95rem 1rem;
-            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
-            margin-bottom: 1rem;
+        .insight-bullet {{
+            padding-left: 0.9rem;
+            position: relative;
+            margin-bottom: 0.65rem;
+        }}
+        .insight-bullet::before {{
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 0.45rem;
+            width: 0.38rem;
+            height: 0.38rem;
+            background: {BLUE};
+            border-radius: 999px;
+        }}
+        .kpi-row {{
+            margin-bottom: 0.75rem;
         }}
         </style>
         """,
@@ -364,8 +409,14 @@ def add_trendline(fig: go.Figure, df: pd.DataFrame, x_col: str, y_col: str, row=
 def hero(title: str, subtitle: str) -> None:
     st.markdown(
         f"""
+        <div class="page-header">
+            <div>
+                <div class="page-title">OMNI Sales Performance Dashboard</div>
+                <div class="page-sub">{subtitle}</div>
+            </div>
+        </div>
         <div class="hero-card">
-            <div class="hero-title">Sales Performance Dashboard</div>
+            <div class="hero-title">{title}</div>
             <div class="hero-sub">OMNI Co-relation</div>
         </div>
         """,
@@ -384,6 +435,10 @@ def metric_card(label: str, value: str, subtext: str = "") -> None:
         """,
         unsafe_allow_html=True,
     )
+
+
+def display_label(label: str) -> str:
+    return DISPLAY_LABELS.get(label, label)
 
 
 def section_open() -> None:
@@ -606,6 +661,7 @@ def render_filter_summary(df: pd.DataFrame, settings: dict[str, object], paramet
 def render_parameter_overview(parameter_metrics: pd.DataFrame, top_n: int) -> None:
     section_open()
     top_metrics = parameter_metrics.head(top_n).copy()
+    top_metrics["Display Parameter"] = top_metrics["Parameter"].map(display_label)
     c1, c2 = st.columns([1.2, 1.0], gap="large")
     with c1:
         theme_df = (
@@ -631,7 +687,8 @@ def render_parameter_overview(parameter_metrics: pd.DataFrame, top_n: int) -> No
         )
         st.plotly_chart(fig, use_container_width=True)
     with c2:
-        insight_df = top_metrics[["Parameter", "Driver Score", "Correlation", "Gap %", "Action Priority"]].copy()
+        insight_df = top_metrics[["Display Parameter", "Driver Score", "Correlation", "Gap %", "Action Priority"]].copy()
+        insight_df = insight_df.rename(columns={"Display Parameter": "Parameter"})
         st.dataframe(
             insight_df.style.format(
                 {"Driver Score": "{:.1f}", "Correlation": "{:.3f}", "Gap %": "{:.1f}"}
@@ -863,22 +920,18 @@ def decision_snapshot(
 
 
 def render_insight_panel(snapshot: dict[str, str], parameter_metrics: pd.DataFrame) -> None:
-    top_two = parameter_metrics.head(2)["Parameter"].tolist()
-    weak = snapshot["lowest_parameter"]
+    top_two = [display_label(item) for item in parameter_metrics.head(2)["Parameter"].tolist()]
+    weak = display_label(snapshot["lowest_parameter"])
     st.markdown(
         f"""
         <div class="insight-card">
             <div class="section-title">What / Why / What Next</div>
-            <div class="tiny-label">What is happening</div>
-            <div class="insight-line">{snapshot["what"]}</div>
-            <div class="tiny-label">Why it is happening</div>
-            <div class="insight-line">{snapshot["why"]}</div>
-            <div class="tiny-label">What should be done</div>
-            <div class="insight-line">{snapshot["next"]}</div>
+            <div class="tiny-label">Fast read</div>
+            <div class="insight-bullet"><div class="tiny-label">What is happening</div><div class="insight-line">{snapshot["what"]}</div></div>
+            <div class="insight-bullet"><div class="tiny-label">Why it is happening</div><div class="insight-line">{snapshot["why"]}</div></div>
+            <div class="insight-bullet"><div class="tiny-label">What should be done</div><div class="insight-line">{snapshot["next"]}</div></div>
             <div class="tiny-label">Analytical note</div>
             <div class="insight-line">{snapshot["caveat"]}</div>
-            <div class="tiny-label">Theme readout</div>
-            <div class="insight-line">{snapshot["theme_summary"]}</div>
             <div style="margin-top:0.6rem;">
                 {''.join(f'<span class="pill pill-green">{item}</span>' for item in top_two)}
                 <span class="pill pill-red">{weak}</span>
@@ -906,7 +959,8 @@ def executive_brief_page(
 
     strongest = parameter_metrics.iloc[0]
     weakest = parameter_metrics.sort_values("Average Score").iloc[0]
-    c1, c2, c3, c4, c5 = st.columns(5)
+    st.markdown('<div class="kpi-row">', unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         metric_card("Avg SPD", f"{df['SPD'].mean():.2f}", "Current sales productivity")
     with c2:
@@ -914,23 +968,18 @@ def executive_brief_page(
     with c3:
         metric_card(
             "Strongest Driver",
-            strongest["Parameter"],
+            display_label(strongest["Parameter"]),
             f"Driver score {strongest['Driver Score']:.0f} | variance explained {strongest['SPD Variance Explained %']:.1f}%",
         )
     with c4:
         metric_card(
-            "Weakest Driver",
-            weakest["Parameter"],
-            f"Lowest average score {weakest['Average Score']:.2f} in {parameter_view.lower()}",
-        )
-    with c5:
-        metric_card(
-            "Coverage",
-            f"{df['Agent Name'].nunique()} agents",
+            "Risk And Coverage",
+            f"{display_label(weakest['Parameter'])} | {df['Agent Name'].nunique()} agents",
             f"{len(parameter_metrics)} drivers | ranked by {settings['ranking_basis']}",
         )
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    left, right = st.columns([1.75, 1.0], gap="large")
+    left, right = st.columns([2.2, 0.95], gap="medium")
     with left:
         section_open()
         scatter_df = df.dropna(subset=["SPD", "Overall Quality Score"]).copy()
@@ -951,6 +1000,7 @@ def executive_brief_page(
             plot_bgcolor=SURFACE,
             margin=dict(l=10, r=10, t=52, b=10),
             legend_title_text="SPD Band",
+            height=520,
         )
         st.plotly_chart(fig, use_container_width=True)
         section_close()
@@ -959,6 +1009,7 @@ def executive_brief_page(
 
     section_open()
     ranking = parameter_metrics.head(int(settings["top_n"])).copy().sort_values(settings["ranking_basis"], ascending=True)
+    ranking["Display Parameter"] = ranking["Parameter"].map(display_label)
     ranking["Color"] = np.where(
         ranking["Action Priority"] == "Fix Now",
         RED,
@@ -968,7 +1019,7 @@ def executive_brief_page(
         data=[
             go.Bar(
                 x=ranking[settings["ranking_basis"]],
-                y=ranking["Parameter"],
+                y=ranking["Display Parameter"],
                 orientation="h",
                 marker_color=ranking["Color"],
                 customdata=np.stack(
