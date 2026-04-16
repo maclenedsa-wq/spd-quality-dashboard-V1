@@ -8,6 +8,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from historical_data import HISTORICAL_DATA_FILE, standardize_snapshot_frame
+
 st.set_page_config(
     page_title="OMNI SPD Insights Hub",
     page_icon=":chart_with_upwards_trend:",
@@ -314,37 +316,18 @@ def inject_css() -> None:
 
 @st.cache_data(show_spinner=False)
 def load_data() -> pd.DataFrame:
-    df = pd.read_excel(DATA_FILE, sheet_name=SHEET_NAME)
-    df = df.rename(
-        columns={
-            "Advisor": "Agent Name",
-            "Team Leader": "Team / Vendor",
-            "SPD/Agent": "SPD",
-            "Quality Score": "Overall Quality Score",
-            "Listening & Understanding Needs": "Listening",
-            "Product Knowledge and Explanation": "Product Knowledge",
-            "Acknowledge & Empathise": "Empathise",
-            "Language, Tone and Professionalism": "Language Tone Professionalism",
-        }
-    )
+    if HISTORICAL_DATA_FILE.exists():
+        df = pd.read_csv(HISTORICAL_DATA_FILE, parse_dates=["Snapshot Date", "Ingested At"])
+        df["Data Mode"] = "Historical"
+    else:
+        raw_df = pd.read_excel(DATA_FILE, sheet_name=SHEET_NAME)
+        df = standardize_snapshot_frame(
+            raw_df,
+            snapshot_date=pd.Timestamp.today().normalize(),
+            source_name=DATA_FILE.name,
+        )
+        df["Data Mode"] = "Current Snapshot"
 
-    text_columns = ["Campaign", "Team / Vendor", "ECN", "Agent Name"]
-    numeric_columns = [
-        "SPD",
-        "Overall Quality Score",
-        *QUALITY_PARAMETERS.values(),
-        *DETAILED_PARAMETERS.values(),
-    ]
-
-    for column in text_columns:
-        if column in df.columns:
-            df[column] = df[column].astype("string").str.strip()
-
-    for column in numeric_columns:
-        if column in df.columns:
-            df[column] = pd.to_numeric(df[column], errors="coerce")
-
-    df = df[df["Agent Name"].notna()].copy()
     df["Is Outlier SPD"] = df["SPD"] > 3
 
     valid_spd = df["SPD"].dropna()
@@ -356,6 +339,8 @@ def load_data() -> pd.DataFrame:
         labels=["Low", "Medium", "High"],
         include_lowest=True,
     ).astype("string")
+    df["Snapshot Date"] = pd.to_datetime(df["Snapshot Date"], errors="coerce")
+    df["Snapshot Label"] = df["Snapshot Date"].dt.strftime("%Y-%m-%d").fillna("Current Snapshot")
 
     return df
 
@@ -511,14 +496,22 @@ def summarize_driver_themes(parameter_metrics: pd.DataFrame) -> str:
 
 def filter_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
     st.sidebar.title("OMNI Decision System")
-    st.sidebar.caption("Executive version")
+    st.sidebar.caption(df["Data Mode"].iloc[0] if "Data Mode" in df.columns and not df.empty else "Executive version")
     st.sidebar.markdown("## Filters")
 
     teams = sorted(df["Team / Vendor"].dropna().unique().tolist())
     campaigns = sorted(df["Campaign"].dropna().unique().tolist())
+    snapshot_labels = sorted(df["Snapshot Label"].dropna().unique().tolist(), reverse=True)
+
+    with st.sidebar.expander("Snapshot", expanded=True):
+        is_historical_mode = bool("Data Mode" in df.columns and not df.empty and df["Data Mode"].iloc[0] == "Historical")
+        default_snapshot = snapshot_labels if is_historical_mode else snapshot_labels[:1] if snapshot_labels else []
+        selected_snapshots = st.multiselect("Snapshot Date", snapshot_labels, default=default_snapshot)
     with st.sidebar.expander("Population", expanded=True):
         selected_campaign = st.multiselect("Campaign", campaigns)
         filtered_agents_df = df.copy()
+        if selected_snapshots:
+            filtered_agents_df = filtered_agents_df[filtered_agents_df["Snapshot Label"].isin(selected_snapshots)]
         if selected_campaign:
             filtered_agents_df = filtered_agents_df[filtered_agents_df["Campaign"].isin(selected_campaign)]
 
@@ -607,6 +600,8 @@ def filter_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
             )
 
     filtered = df.copy()
+    if selected_snapshots:
+        filtered = filtered[filtered["Snapshot Label"].isin(selected_snapshots)]
     if selected_campaign:
         filtered = filtered[filtered["Campaign"].isin(selected_campaign)]
     if selected_team:
@@ -630,6 +625,7 @@ def filter_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
         "outlier_mode": outlier_mode,
         "parameter_view": parameter_view,
         "selected_campaign": selected_campaign,
+        "selected_snapshots": selected_snapshots,
         "selected_team": selected_team,
         "selected_agents": selected_agents,
         "selected_band": selected_band,
@@ -666,6 +662,7 @@ def apply_parameter_filters(parameter_metrics: pd.DataFrame, settings: dict[str,
 
 def render_filter_summary(df: pd.DataFrame, settings: dict[str, object], parameter_metrics: pd.DataFrame) -> None:
     chips = [
+        f"{len(settings['selected_snapshots'])} snapshot(s)" if settings["selected_snapshots"] else "All snapshots",
         f"{settings['parameter_view']}",
         f"{settings['outlier_mode']}",
         f"{settings['role_view']} lens",
@@ -1005,6 +1002,51 @@ def simulate_spd_uplift(
             }
         )
     return pd.DataFrame(rows), estimated_spd
+
+
+def get_trend_summary(df: pd.DataFrame) -> pd.DataFrame:
+    if "Snapshot Date" not in df.columns or df["Snapshot Date"].isna().all():
+        return pd.DataFrame()
+
+    trend = (
+        df.groupby("Snapshot Date", as_index=False)
+        .agg(
+            {
+                "SPD": "mean",
+                "Overall Quality Score": "mean",
+                "Positive": "mean",
+                ".payment_done": "mean",
+                ".unresolved": "mean",
+            }
+        )
+        .sort_values("Snapshot Date")
+    )
+    if trend.empty:
+        return trend
+    trend["Positive Intent Rate"] = trend["Positive"] * (100 if trend["Positive"].max() <= 1 else 1)
+    trend["Payment Completion Rate"] = trend[".payment_done"] * (100 if trend[".payment_done"].max() <= 1 else 1)
+    trend["Unresolved Risk Rate"] = trend[".unresolved"] * (100 if trend[".unresolved"].max() <= 1 else 1)
+    return trend
+
+
+def get_team_momentum(df: pd.DataFrame) -> pd.DataFrame:
+    if "Snapshot Date" not in df.columns or df["Snapshot Date"].nunique() < 2:
+        return pd.DataFrame()
+
+    grouped = (
+        df.groupby(["Snapshot Date", "Team / Vendor"], as_index=False)["SPD"]
+        .mean()
+        .sort_values(["Team / Vendor", "Snapshot Date"])
+    )
+    latest_dates = grouped["Snapshot Date"].drop_duplicates().sort_values().tolist()
+    recent_dates = latest_dates[-2:]
+    compare = grouped[grouped["Snapshot Date"].isin(recent_dates)].copy()
+    pivot = compare.pivot(index="Team / Vendor", columns="Snapshot Date", values="SPD").reset_index()
+    if len(recent_dates) == 2:
+        left, right = recent_dates
+        pivot["Momentum"] = pivot[right] - pivot[left]
+        pivot = pivot.rename(columns={left: "Previous SPD", right: "Latest SPD"})
+    return pivot.sort_values("Momentum", ascending=False).reset_index(drop=True)
 
 
 def get_parameter_metrics(df: pd.DataFrame, parameter_catalog: dict[str, str]) -> pd.DataFrame:
@@ -2049,6 +2091,89 @@ def performance_lab_page(
     section_close()
 
 
+def trends_page(df: pd.DataFrame, settings: dict[str, object]) -> None:
+    hero(
+        "Trends",
+        "Historical snapshot trends for SPD, quality, and sales outcome movement",
+    )
+    render_filter_summary(df, settings, pd.DataFrame([{"Parameter": "History", "Correlation": np.nan}]))
+
+    trend = get_trend_summary(df)
+    team_momentum = get_team_momentum(df)
+
+    if trend.empty:
+        st.warning("No snapshot history is available yet. Ingest dated snapshots to unlock true trend analysis.")
+        return
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        metric_card("Snapshots", str(df["Snapshot Date"].nunique()), "Historical points in current filter")
+    with c2:
+        metric_card("Latest SPD", f"{trend['SPD'].iloc[-1]:.2f}", "Most recent average SPD")
+    with c3:
+        metric_card("Latest Quality", f"{trend['Overall Quality Score'].iloc[-1]:.2f}", "Most recent average quality score")
+    with c4:
+        if len(trend) >= 2:
+            delta = trend["SPD"].iloc[-1] - trend["SPD"].iloc[-2]
+            metric_card("SPD Change", f"{delta:+.2f}", "Latest snapshot vs previous snapshot")
+        else:
+            metric_card("SPD Change", "-", "Add another snapshot to see movement")
+
+    section_open()
+    if len(trend) < 2:
+        st.info("Only one snapshot is available so far. The page is trend-ready; once you ingest the next dated snapshot, these visuals will show movement and momentum.")
+    else:
+        trend_fig = make_subplots(specs=[[{"secondary_y": True}]])
+        trend_fig.add_trace(
+            go.Scatter(x=trend["Snapshot Date"], y=trend["SPD"], mode="lines+markers", name="SPD", line=dict(color=BLUE, width=3)),
+            secondary_y=False,
+        )
+        trend_fig.add_trace(
+            go.Scatter(x=trend["Snapshot Date"], y=trend["Overall Quality Score"], mode="lines+markers", name="Quality", line=dict(color=GREEN, width=3)),
+            secondary_y=True,
+        )
+        trend_fig.update_layout(
+            title="SPD and Quality trend by snapshot date",
+            paper_bgcolor=SURFACE,
+            plot_bgcolor=SURFACE,
+            margin=dict(l=10, r=10, t=45, b=10),
+            height=420,
+        )
+        trend_fig.update_yaxes(title_text="SPD", secondary_y=False)
+        trend_fig.update_yaxes(title_text="Quality Score", secondary_y=True)
+        st.plotly_chart(trend_fig, use_container_width=True)
+    section_close()
+
+    c1, c2 = st.columns([1.05, 1.0], gap="large")
+    with c1:
+        section_open()
+        outcome_fig = go.Figure()
+        outcome_fig.add_trace(go.Scatter(x=trend["Snapshot Date"], y=trend["Positive Intent Rate"], mode="lines+markers", name="Positive Intent Rate", line=dict(color=GREEN, width=2)))
+        outcome_fig.add_trace(go.Scatter(x=trend["Snapshot Date"], y=trend["Payment Completion Rate"], mode="lines+markers", name="Payment Completion Rate", line=dict(color=BLUE, width=2)))
+        outcome_fig.add_trace(go.Scatter(x=trend["Snapshot Date"], y=trend["Unresolved Risk Rate"], mode="lines+markers", name="Unresolved Risk Rate", line=dict(color=RED, width=2)))
+        outcome_fig.update_layout(
+            title="Outcome trend by snapshot date",
+            paper_bgcolor=SURFACE,
+            plot_bgcolor=SURFACE,
+            margin=dict(l=10, r=10, t=45, b=10),
+            height=420,
+        )
+        st.plotly_chart(outcome_fig, use_container_width=True)
+        section_close()
+    with c2:
+        section_open()
+        st.markdown("**Team Momentum**")
+        if team_momentum.empty:
+            st.info("Team momentum will appear once at least two snapshot dates exist.")
+        else:
+            st.dataframe(
+                team_momentum.style.format({"Previous SPD": "{:.2f}", "Latest SPD": "{:.2f}", "Momentum": "{:+.2f}"}),
+                use_container_width=True,
+                height=360,
+            )
+        section_close()
+
+
 def main() -> None:
     inject_css()
     df = load_data()
@@ -2074,11 +2199,13 @@ def main() -> None:
 
     page = st.sidebar.radio(
         "Navigation",
-        ["Executive Brief", "Root Cause", "Action Center", "Diagnostics", "Performance Lab"],
+        ["Executive Brief", "Trends", "Root Cause", "Action Center", "Diagnostics", "Performance Lab"],
     )
 
     if page == "Executive Brief":
         executive_brief_page(filtered, modeled_df, parameter_metrics, team_metrics, agent_risks, model_meta, outlier_mode, parameter_view, settings)
+    elif page == "Trends":
+        trends_page(filtered, settings)
     elif page == "Root Cause":
         root_cause_page(filtered, parameter_metrics, team_metrics, selected_catalog, parameter_view, settings)
     elif page == "Action Center":
