@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 import re
 
@@ -10,6 +12,7 @@ BASE_DIR = Path(__file__).parent
 RAW_DATA_DIR = BASE_DIR / "data" / "raw"
 PROCESSED_DATA_DIR = BASE_DIR / "data" / "processed"
 HISTORICAL_DATA_FILE = PROCESSED_DATA_DIR / "historical_spd_data.csv"
+SYNC_STATUS_FILE = PROCESSED_DATA_DIR / "sync_status.json"
 
 RENAME_MAP = {
     "Advisor": "Agent Name",
@@ -146,3 +149,46 @@ def standardize_snapshot_frame(
 def ensure_data_directories() -> None:
     RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
     PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def parse_spreadsheet_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    match = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", text)
+    if match:
+        return match.group(1)
+    return text
+
+
+def load_google_service_account_info() -> dict | None:
+    raw_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if raw_json:
+        return json.loads(raw_json)
+
+    path_value = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+    if path_value:
+        path = Path(path_value).expanduser()
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    return None
+
+
+def write_sync_status(payload: dict) -> None:
+    ensure_data_directories()
+    serializable = dict(payload)
+    for key, value in list(serializable.items()):
+        if isinstance(value, pd.Timestamp):
+            serializable[key] = value.isoformat()
+    SYNC_STATUS_FILE.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
+
+
+def read_sync_status() -> dict:
+    if not SYNC_STATUS_FILE.exists():
+        return {}
+    try:
+        return json.loads(SYNC_STATUS_FILE.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}

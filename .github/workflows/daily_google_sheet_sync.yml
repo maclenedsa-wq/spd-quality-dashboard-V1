@@ -1,0 +1,47 @@
+name: Daily Google Sheet Sync
+
+on:
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  sync-history:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Kolkata
+      GOOGLE_SHEETS_URL: ${{ secrets.GOOGLE_SHEETS_URL }}
+      GOOGLE_SHEETS_WORKSHEET: ${{ secrets.GOOGLE_SHEETS_WORKSHEET }}
+      GOOGLE_SHEETS_RANGE: ${{ secrets.GOOGLE_SHEETS_RANGE }}
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Sync Google Sheet into historical dataset
+        run: |
+          python ingest_history.py \
+            --source google-sheet \
+            --spreadsheet-url "$GOOGLE_SHEETS_URL" \
+            --sheet-name "${GOOGLE_SHEETS_WORKSHEET:-Health}" \
+            --sheet-range "${GOOGLE_SHEETS_RANGE:-}" \
+            --snapshot-date "$(date +%F)"
+
+      - name: Commit refreshed historical data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/processed/historical_spd_data.csv data/processed/sync_status.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Daily Google Sheets sync"
+          git push

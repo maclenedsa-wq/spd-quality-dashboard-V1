@@ -8,7 +8,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from historical_data import HISTORICAL_DATA_FILE, standardize_snapshot_frame
+from historical_data import HISTORICAL_DATA_FILE, read_sync_status, standardize_snapshot_frame
 
 st.set_page_config(
     page_title="OMNI SPD Insights Hub",
@@ -365,6 +365,20 @@ def load_data() -> pd.DataFrame:
     return df
 
 
+@st.cache_data(show_spinner=False)
+def load_sync_status() -> dict[str, object]:
+    return read_sync_status()
+
+
+def format_sync_label(value: object) -> str:
+    if value in (None, "", pd.NaT):
+        return "Not available"
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return str(value)
+    return parsed.strftime("%d %b %Y, %I:%M %p")
+
+
 def safe_corr(df: pd.DataFrame, x_col: str, y_col: str) -> float:
     pair = df[[x_col, y_col]].dropna()
     if len(pair) < 3:
@@ -519,8 +533,18 @@ def summarize_driver_themes(parameter_metrics: pd.DataFrame) -> str:
 
 
 def filter_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
-    st.sidebar.title("OMNI Decision System")
+    sync_status = load_sync_status()
+
+    st.sidebar.title("OMNI SPD Insights Hub")
     st.sidebar.caption(df["Data Mode"].iloc[0] if "Data Mode" in df.columns and not df.empty else "Executive version")
+    sync_state = str(sync_status.get("status", "")).lower()
+    if sync_state == "success":
+        st.sidebar.caption(
+            f"Last sync: {format_sync_label(sync_status.get('last_sync_at'))} | "
+            f"Snapshot: {format_sync_label(sync_status.get('latest_snapshot_date'))}"
+        )
+    elif sync_state == "failed":
+        st.sidebar.caption(f"Last sync failed: {sync_status.get('error', 'Unknown error')}")
     st.sidebar.markdown("## Filters")
 
     teams = sorted(df["Team / Vendor"].dropna().unique().tolist())
