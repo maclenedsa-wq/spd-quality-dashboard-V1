@@ -20,17 +20,20 @@ st.set_page_config(
 DATA_FILE = Path(__file__).parent / "data.xlsx"
 SHEET_NAME = "Health"
 
-BG = "#F4F7FB"
-SURFACE = "#FFFFFF"
-TEXT = "#111827"
-MUTED = "#5F6B7A"
-GREEN = "#0F9D58"
-RED = "#D93025"
-AMBER = "#B45309"
-BLUE = "#2563EB"
-TEAL = "#0F766E"
-SLATE = "#CBD5E1"
-NAVY = "#0F172A"
+BG = "#F5F6F1"
+SURFACE = "#FFFDF8"
+TEXT = "#14281D"
+MUTED = "#5E6E66"
+GREEN = "#1F9D78"
+RED = "#D95D39"
+AMBER = "#D4A017"
+BLUE = "#1D5C63"
+TEAL = "#0B6E69"
+SLATE = "#C9D6CF"
+NAVY = "#173F5F"
+MINT = "#DFF3EC"
+SAND = "#F7E8C8"
+ROSE = "#F7D8D2"
 
 QUALITY_PARAMETERS = {
     "Listening & Understanding Needs": "Listening",
@@ -109,10 +112,15 @@ def inject_css() -> None:
         f"""
         <style>
         [data-testid="stSidebar"] > div:first-child {{
-            background: linear-gradient(180deg, #F8FBFF 0%, #EEF4FB 100%);
+            background:
+                radial-gradient(circle at top right, rgba(31, 157, 120, 0.16) 0%, transparent 38%),
+                linear-gradient(180deg, #F6F4ED 0%, #EEF2EA 100%);
         }}
         .stApp {{
-            background: radial-gradient(circle at top left, #FFFFFF 0%, {BG} 55%);
+            background:
+                radial-gradient(circle at top left, rgba(31, 157, 120, 0.10) 0%, transparent 28%),
+                radial-gradient(circle at top right, rgba(212, 160, 23, 0.10) 0%, transparent 24%),
+                linear-gradient(180deg, #FAFBF8 0%, {BG} 62%);
             color: {TEXT};
         }}
         .block-container {{
@@ -128,12 +136,14 @@ def inject_css() -> None:
             max-width: 300px;
         }}
         .hero-card {{
-            background: linear-gradient(135deg, {NAVY} 0%, #1E3A8A 100%);
+            background:
+                linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.00) 100%),
+                linear-gradient(135deg, {NAVY} 0%, {BLUE} 60%, {TEAL} 100%);
             color: #FFFFFF;
             border-radius: 22px;
             padding: 0.9rem 1.15rem;
             margin-bottom: 0.8rem;
-            box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
+            box-shadow: 0 16px 34px rgba(23, 63, 95, 0.18);
         }}
         .hero-title {{
             font-size: 1.05rem;
@@ -165,11 +175,11 @@ def inject_css() -> None:
         }}
         .metric-card {{
             background: {SURFACE};
-            border: 1px solid #E5E7EB;
+            border: 1px solid #D7E3DB;
             border-radius: 18px;
             padding: 0.9rem 0.95rem;
             min-height: 118px;
-            box-shadow: 0 6px 20px rgba(15, 23, 42, 0.05);
+            box-shadow: 0 10px 24px rgba(20, 40, 29, 0.06);
         }}
         .metric-label {{
             color: {MUTED};
@@ -192,15 +202,15 @@ def inject_css() -> None:
         }}
         .section-card {{
             background: {SURFACE};
-            border: 1px solid #E5E7EB;
+            border: 1px solid #DCE6DE;
             border-radius: 20px;
             padding: 0.85rem 0.9rem 0.45rem 0.9rem;
-            box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+            box-shadow: 0 12px 28px rgba(20, 40, 29, 0.05);
             margin-bottom: 0.8rem;
         }}
         .insight-card {{
-            background: linear-gradient(135deg, #FFFFFF 0%, #F0F7FF 100%);
-            border: 1px solid #D8E5F7;
+            background: linear-gradient(135deg, #FFFDF8 0%, #F0FBF6 100%);
+            border: 1px solid #CCE5D8;
             border-radius: 20px;
             padding: 0.95rem 1rem;
             min-height: 100%;
@@ -234,24 +244,24 @@ def inject_css() -> None:
             font-weight: 700;
         }}
         .pill-green {{
-            background: #DCFCE7;
-            color: #166534;
+            background: {MINT};
+            color: #0F6B52;
         }}
         .pill-red {{
-            background: #FEE2E2;
-            color: #991B1B;
+            background: {ROSE};
+            color: #9A351A;
         }}
         .pill-amber {{
-            background: #FEF3C7;
-            color: #92400E;
+            background: {SAND};
+            color: #8B6508;
         }}
         .action-card {{
             background: {SURFACE};
-            border: 1px solid #E5E7EB;
+            border: 1px solid #DCE6DE;
             border-left: 5px solid {BLUE};
             border-radius: 20px;
             padding: 1rem 1.05rem;
-            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.05);
+            box-shadow: 0 12px 28px rgba(20, 40, 29, 0.05);
             min-height: 250px;
         }}
         .action-title {{
@@ -271,18 +281,18 @@ def inject_css() -> None:
             line-height: 1.45;
         }}
         .filter-strip {{
-            background: linear-gradient(135deg, #FFFFFF 0%, #F7FAFF 100%);
-            border: 1px solid #DCE7F5;
+            background: linear-gradient(135deg, #FFFDF8 0%, #F2F8F4 100%);
+            border: 1px solid #CFE1D6;
             border-radius: 18px;
             padding: 0.72rem 0.9rem 0.42rem 0.9rem;
             margin-bottom: 0.8rem;
-            box-shadow: 0 6px 18px rgba(37, 99, 235, 0.06);
+            box-shadow: 0 8px 20px rgba(29, 92, 99, 0.08);
         }}
         .filter-chip {{
             display: inline-block;
-            background: #E8F1FF;
-            color: #1D4ED8;
-            border: 1px solid #BFDBFE;
+            background: #E6F3EF;
+            color: {TEAL};
+            border: 1px solid #BBDCCF;
             border-radius: 999px;
             padding: 0.26rem 0.65rem;
             margin-right: 0.35rem;
@@ -302,11 +312,19 @@ def inject_css() -> None:
             top: 0.45rem;
             width: 0.38rem;
             height: 0.38rem;
-            background: {BLUE};
+            background: {GREEN};
             border-radius: 999px;
         }}
         .kpi-row {{
             margin-bottom: 0.75rem;
+        }}
+        [data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] > div,
+        [data-testid="stSidebar"] .stMultiSelect div[data-baseweb="select"] > div {{
+            background: rgba(255, 253, 248, 0.92);
+            border-color: #D3E0D7;
+        }}
+        [data-testid="stSidebar"] .stSlider [data-baseweb="slider"] div {{
+            color: {GREEN};
         }}
         </style>
         """,
@@ -1047,6 +1065,94 @@ def get_team_momentum(df: pd.DataFrame) -> pd.DataFrame:
         pivot["Momentum"] = pivot[right] - pivot[left]
         pivot = pivot.rename(columns={left: "Previous SPD", right: "Latest SPD"})
     return pivot.sort_values("Momentum", ascending=False).reset_index(drop=True)
+
+
+def get_snapshot_anomalies(df: pd.DataFrame) -> pd.DataFrame:
+    if "Snapshot Date" not in df.columns or df["Snapshot Date"].nunique() < 2:
+        return pd.DataFrame()
+
+    trend = get_trend_summary(df)
+    if len(trend) < 2:
+        return pd.DataFrame()
+
+    latest = trend.iloc[-1]
+    previous = trend.iloc[-2]
+    rows = []
+
+    checks = [
+        ("SPD drop anomaly", latest["SPD"] - previous["SPD"], -0.20, "Red", "SPD declined materially versus previous snapshot"),
+        ("Quality drop anomaly", latest["Overall Quality Score"] - previous["Overall Quality Score"], -1.50, "Amber", "Quality score declined materially versus previous snapshot"),
+        ("Unresolved spike anomaly", latest["Unresolved Risk Rate"] - previous["Unresolved Risk Rate"], 3.0, "Red", "Unresolved risk increased materially"),
+        ("Payment completion drop anomaly", latest["Payment Completion Rate"] - previous["Payment Completion Rate"], -3.0, "Amber", "Payment completion weakened materially"),
+    ]
+
+    for name, delta, threshold, severity, message in checks:
+        triggered = delta <= threshold if "drop" in name.lower() else delta >= threshold
+        rows.append(
+            {
+                "Alert": name,
+                "Delta": delta,
+                "Threshold": threshold,
+                "Triggered": triggered,
+                "Severity": severity if triggered else "Monitor",
+                "Readout": message,
+            }
+        )
+
+    followup_delta = latest["Positive Intent Rate"] - previous["Positive Intent Rate"]
+    closure_delta = latest["Payment Completion Rate"] - previous["Payment Completion Rate"]
+    unresolved_delta = latest["Unresolved Risk Rate"] - previous["Unresolved Risk Rate"]
+    triggered = followup_delta > 1.0 and closure_delta <= 0 and unresolved_delta > 0
+    rows.append(
+        {
+            "Alert": "Follow-up leakage anomaly",
+            "Delta": unresolved_delta,
+            "Threshold": 0.0,
+            "Triggered": triggered,
+            "Severity": "Amber" if triggered else "Monitor",
+            "Readout": "Positive intent rose, but closure stalled while unresolved risk worsened.",
+        }
+    )
+
+    return pd.DataFrame(rows)
+
+
+def get_team_anomaly_table(df: pd.DataFrame) -> pd.DataFrame:
+    if "Snapshot Date" not in df.columns or df["Snapshot Date"].nunique() < 2:
+        return pd.DataFrame()
+
+    grouped = (
+        df.groupby(["Snapshot Date", "Team / Vendor"], as_index=False)
+        .agg({"SPD": "mean", ".unresolved": "mean", ".payment_done": "mean"})
+        .sort_values(["Team / Vendor", "Snapshot Date"])
+    )
+    dates = grouped["Snapshot Date"].drop_duplicates().sort_values().tolist()
+    if len(dates) < 2:
+        return pd.DataFrame()
+
+    prev_date, latest_date = dates[-2], dates[-1]
+    previous = grouped[grouped["Snapshot Date"] == prev_date].rename(
+        columns={"SPD": "Previous SPD", ".unresolved": "Previous Unresolved", ".payment_done": "Previous Payment"}
+    )
+    latest = grouped[grouped["Snapshot Date"] == latest_date].rename(
+        columns={"SPD": "Latest SPD", ".unresolved": "Latest Unresolved", ".payment_done": "Latest Payment"}
+    )
+    merged = previous.merge(latest, on="Team / Vendor", how="inner")
+    if merged.empty:
+        return merged
+
+    merged["SPD Delta"] = merged["Latest SPD"] - merged["Previous SPD"]
+    merged["Unresolved Delta"] = (merged["Latest Unresolved"] - merged["Previous Unresolved"]) * 100
+    merged["Payment Delta"] = (merged["Latest Payment"] - merged["Previous Payment"]) * 100
+    merged["Alert"] = np.select(
+        [
+            (merged["SPD Delta"] <= -0.20) & (merged["Unresolved Delta"] > 0),
+            (merged["Payment Delta"] <= -3.0),
+        ],
+        ["SPD drop + risk rise", "Payment completion drop"],
+        default="Stable",
+    )
+    return merged.sort_values(["Alert", "SPD Delta"]).reset_index(drop=True)
 
 
 def get_parameter_metrics(df: pd.DataFrame, parameter_catalog: dict[str, str]) -> pd.DataFrame:
@@ -2100,6 +2206,8 @@ def trends_page(df: pd.DataFrame, settings: dict[str, object]) -> None:
 
     trend = get_trend_summary(df)
     team_momentum = get_team_momentum(df)
+    anomalies = get_snapshot_anomalies(df)
+    team_alerts = get_team_anomaly_table(df)
 
     if trend.empty:
         st.warning("No snapshot history is available yet. Ingest dated snapshots to unlock true trend analysis.")
@@ -2170,6 +2278,41 @@ def trends_page(df: pd.DataFrame, settings: dict[str, object]) -> None:
                 team_momentum.style.format({"Previous SPD": "{:.2f}", "Latest SPD": "{:.2f}", "Momentum": "{:+.2f}"}),
                 use_container_width=True,
                 height=360,
+            )
+        section_close()
+
+    c1, c2 = st.columns([1.0, 1.1], gap="large")
+    with c1:
+        section_open()
+        st.markdown("**Trend Alerts**")
+        if anomalies.empty:
+            st.info("Trend alerts will activate once at least two snapshot dates exist.")
+        else:
+            st.dataframe(
+                anomalies.style.format({"Delta": "{:+.2f}", "Threshold": "{:+.2f}"}),
+                use_container_width=True,
+                height=240,
+            )
+        section_close()
+    with c2:
+        section_open()
+        st.markdown("**Team Alert Watchlist**")
+        if team_alerts.empty:
+            st.info("Team watchlist will activate once at least two snapshot dates exist.")
+        else:
+            st.dataframe(
+                team_alerts[["Team / Vendor", "Previous SPD", "Latest SPD", "SPD Delta", "Unresolved Delta", "Payment Delta", "Alert"]]
+                .style.format(
+                    {
+                        "Previous SPD": "{:.2f}",
+                        "Latest SPD": "{:.2f}",
+                        "SPD Delta": "{:+.2f}",
+                        "Unresolved Delta": "{:+.1f}",
+                        "Payment Delta": "{:+.1f}",
+                    }
+                ),
+                use_container_width=True,
+                height=240,
             )
         section_close()
 
