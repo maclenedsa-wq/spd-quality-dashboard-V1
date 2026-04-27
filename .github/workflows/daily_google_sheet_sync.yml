@@ -5,6 +5,14 @@ on:
     - cron: "30 3 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: daily-google-sheet-sync
+  cancel-in-progress: false
+
 jobs:
   sync-history:
     runs-on: ubuntu-latest
@@ -13,17 +21,26 @@ jobs:
       GOOGLE_SHEETS_URL: ${{ secrets.GOOGLE_SHEETS_URL }}
       GOOGLE_SHEETS_WORKSHEET: ${{ secrets.GOOGLE_SHEETS_WORKSHEET }}
       GOOGLE_SHEETS_RANGE: ${{ secrets.GOOGLE_SHEETS_RANGE }}
-      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: true
 
+      - id: auth
+        name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          create_credentials_file: true
+          export_environment_variables: true
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
+          cache: "pip"
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -37,11 +54,23 @@ jobs:
             --sheet-range "${GOOGLE_SHEETS_RANGE:-}" \
             --snapshot-date "$(date +%F)"
 
-      - name: Commit refreshed historical data
+      - name: Commit sync outputs
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/processed/historical_spd_data.csv data/processed/sync_status.json
-          git diff --cached --quiet && exit 0
+
+          if [ -f data/processed/historical_spd_data.csv ]; then
+            git add data/processed/historical_spd_data.csv
+          fi
+          if [ -f data/processed/sync_status.json ]; then
+            git add data/processed/sync_status.json
+          fi
+
+          if git diff --cached --quiet; then
+            echo "No sync output changes to commit."
+            exit 0
+          fi
+
           git commit -m "Daily Google Sheets sync"
-          git push
+          git push origin "HEAD:${GITHUB_REF_NAME:-main}"

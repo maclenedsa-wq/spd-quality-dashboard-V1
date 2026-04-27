@@ -113,9 +113,18 @@ def standardize_snapshot_frame(
     source_name: str,
 ) -> pd.DataFrame:
     normalized = df.copy()
+    normalized.columns = normalized.columns.astype(str).str.strip()
     normalized = normalized.loc[:, ~normalized.columns.astype(str).str.startswith("Unnamed:")]
     normalized = normalized.loc[:, ~normalized.columns.astype(str).str.startswith("Correlation")]
     normalized = normalized.rename(columns=RENAME_MAP)
+
+    if "Agent Name" not in normalized.columns:
+        available_columns = ", ".join(str(column) for column in normalized.columns[:20])
+        raise ValueError(
+            "Required sheet column missing after normalization: Agent Name. "
+            "Expected either 'Advisor' or 'Agent Name'. "
+            f"Available columns: {available_columns}"
+        )
 
     for column in TEXT_COLUMNS:
         if column in normalized.columns:
@@ -163,16 +172,30 @@ def parse_spreadsheet_id(value: str | None) -> str | None:
     return text
 
 
+def load_json_object(raw_json: str, source_name: str) -> dict:
+    try:
+        parsed = json.loads(raw_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"{source_name} is not valid JSON: {exc.msg} "
+            f"(line {exc.lineno}, column {exc.colno})."
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{source_name} must contain a JSON object.")
+    return parsed
+
+
 def load_google_service_account_info() -> dict | None:
     raw_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
-    if raw_json:
-        return json.loads(raw_json)
+    if raw_json and raw_json.strip():
+        return load_json_object(raw_json, "GOOGLE_SERVICE_ACCOUNT_JSON")
 
     path_value = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
     if path_value:
         path = Path(path_value).expanduser()
-        if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
+        if not path.exists():
+            raise FileNotFoundError(f"GOOGLE_SERVICE_ACCOUNT_FILE does not exist: {path}")
+        return load_json_object(path.read_text(encoding="utf-8"), "GOOGLE_SERVICE_ACCOUNT_FILE")
     return None
 
 

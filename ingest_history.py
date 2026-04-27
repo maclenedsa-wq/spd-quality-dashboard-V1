@@ -46,16 +46,33 @@ def ingest_excel_file(path: Path, sheet_name: str, snapshot_date: pd.Timestamp) 
     return standardize_snapshot_frame(frame, snapshot_date=snapshot_date, source_name=path.name)
 
 
-def fetch_google_sheet(spreadsheet_id: str, sheet_name: str, cell_range: str | None) -> pd.DataFrame:
-    credentials_info = load_google_service_account_info()
-    if not credentials_info:
+def load_google_credentials(scopes: list[str]):
+    try:
+        import google.auth
+        from google.auth.exceptions import DefaultCredentialsError
+        from google.oauth2.service_account import Credentials
+    except ImportError as exc:
         raise RuntimeError(
-            "Google service account credentials were not found. Set GOOGLE_SERVICE_ACCOUNT_JSON "
-            "or GOOGLE_SERVICE_ACCOUNT_FILE before using --source google-sheet."
-        )
+            "Google API dependencies are missing. Install google-api-python-client and google-auth."
+        ) from exc
 
     try:
-        from google.oauth2.service_account import Credentials
+        credentials, _ = google.auth.default(scopes=scopes)
+        return credentials
+    except DefaultCredentialsError as adc_error:
+        credentials_info = load_google_service_account_info()
+        if credentials_info:
+            return Credentials.from_service_account_info(credentials_info, scopes=scopes)
+        raise RuntimeError(
+            "Google credentials were not found. For GitHub Actions, configure Workload Identity Federation "
+            "and the GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_SERVICE_ACCOUNT_EMAIL secrets. "
+            "For local runs, use Application Default Credentials or set GOOGLE_SERVICE_ACCOUNT_JSON / "
+            "GOOGLE_SERVICE_ACCOUNT_FILE."
+        ) from adc_error
+
+
+def fetch_google_sheet(spreadsheet_id: str, sheet_name: str, cell_range: str | None) -> pd.DataFrame:
+    try:
         from googleapiclient.discovery import build
     except ImportError as exc:
         raise RuntimeError(
@@ -66,7 +83,7 @@ def fetch_google_sheet(spreadsheet_id: str, sheet_name: str, cell_range: str | N
         "https://www.googleapis.com/auth/spreadsheets.readonly",
         "https://www.googleapis.com/auth/drive.readonly",
     ]
-    credentials = Credentials.from_service_account_info(credentials_info, scopes=scopes)
+    credentials = load_google_credentials(scopes)
     service = build("sheets", "v4", credentials=credentials, cache_discovery=False)
 
     target_range = sheet_name if not cell_range else f"{sheet_name}!{cell_range}"

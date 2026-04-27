@@ -3,3 +3,4 @@ __pycache__/
 ~$*.xlsx
 data/raw/
 .streamlit/secrets.toml
+gha-creds-*.json
